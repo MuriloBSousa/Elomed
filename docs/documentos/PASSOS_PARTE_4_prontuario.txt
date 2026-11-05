@@ -1,0 +1,2189 @@
+================================================================================
+ELOMED - PARTE 4 - PRONTUARIO DO PACIENTE, MASCARAS, CEP E TOASTS
+================================================================================
+O QUE ESTA PARTE ENTREGA
+
+  1. Prontuario do paciente com 4 paginas:
+       Pagina 1  Dados do paciente            (leitura + edicao de contato)
+       Pagina 2  Anamnese                     (cada medico acrescenta)
+       Pagina 3  Evolucao e Tratamento        (cada medico acrescenta)
+       Pagina 4  Informacoes Complementares   (cada medico acrescenta)
+     As paginas 2, 3 e 4 NUNCA sobrescrevem o que ja foi escrito. Toda consulta
+     vira uma linha nova, com autor e horario. E o que "historico de consulta"
+     significa.
+
+  2. Correcao do sistema de mensagens. Voce percebeu que em alguns momentos a
+     mensagem de confirmacao NAO aparecia como toast. Isso e um bug real, com
+     causa identificavel, e o capitulo 1 explica e corrige.
+
+  3. Mascaras de CPF, telefone e CEP aplicadas na pagina 1.
+
+  4. Busca de CEP com preenchimento automatico e aviso quando o CEP nao existe
+     (sem travar o preenchimento).
+
+  5. Toasts de 3 segundos no canto superior direito, no lugar das mensagens de
+     confirmacao que hoje ficam paradas na pagina.
+
+
+--------------------------------------------------------------------------------
+COMO LER ESTE DOCUMENTO (leia uma vez, economiza tempo depois)
+--------------------------------------------------------------------------------
+  AZUL   = COLE OU DIGITE. E o que entra no projeto. O texto antes do bloco
+           sempre diz ONDE (qual arquivo, qual metodo, se e no terminal).
+  CINZA  = NAO DIGITE. E explicacao, exemplo ou codigo que voce NAO deve
+           colar. Digitar isso quebra o projeto.
+  PRETO  = LEIA. Motivacao e justificativa.
+
+  REGRA DE OURO DESTE PROJETE: antes de colar qualquer bloco, confira o
+  caminho e o metodo. Um codigo colado no metodo errado da erro de sintaxe
+  ou, pior, grava no lugar errado.
+
+  Se um arquivo nao existir ainda, o proprio passo diz "CRIE O ARQUIVO".
+
+
+--------------------------------------------------------------------------------
+CAPITULO 0 - O QUE JA EXISTE (leia antes de comecar, para nao refazer)
+--------------------------------------------------------------------------------
+
+O projeto ja tem quase tudo que esta parte precisa. NAO recrie:
+
+  public/Assets/js/mascaras.js
+      JA existe. As masks funcionam por CLASS no input, nao por id:
+          <input class="campo-cpf">       -> 000.000.000-00
+          <input class="campo-telefone">  -> (00) 00000-0000
+          <input class="campo-cep">       -> 00000-000
+      O arquivo tambem remove a mascara no submit (o banco guarda so digito,
+      e o cpf/cep sao CHAR(11)/CHAR(8) no schema).
+      Voce so precisa adicionar as classes nos inputs.
+
+  public/Assets/js/buscar_cep.js
+      JA existe. Dispara sozinho em .campo-cep e chama
+          GET {BASE}/endereco/consultar_cep/{8 digitos}
+      que esta em app/controllers/EnderecoController.php (ViaCEP e, se falhar,
+      BrasilAPI).
+      Ele preenche os campos cujo nome comeca com o prefixo do proprio campo
+      de CEP:
+          campo nome="endereco_cep"  ->  preenche endereco_rua, endereco_bairro,
+                                        endereco_cidade, endereco_uf,
+                                        endereco_complemento
+          campo nome="end_cep"       ->  preenche end_rua, end_bairro, ...
+      Na pagina 1 deste material o campo se chama endereco_cep, entao os
+      outros campos tem que se chamar endereco_rua / endereco_bairro /
+      endereco_cidade / endereco_uf / endereco_complemento. E o mesmo nome que
+      app/models/Paciente.php (sincronizarDadosComplementares) ja le. Por isso
+      a gravacao vai ter uma linha so.
+
+  public/Assets/js/toasts.js
+      JA existe. showToast(tipo, mensagem, duracao) com 3000 ms de padrao e
+      posicao fixa no canto superior direito (top 20px / right 20px).
+      Tipos: success, error, warning, info.
+      O capitulo 1 arruma o que esta errado nele.
+
+  app/models/Endereco.php -> salvar($usuarioId, $dados)
+  app/models/Telefone.php -> substituir($usuarioId, $entrada)
+      JA existem e gravam (insert ou update) o endereco e o telefone.
+      Nao precisa escrever SQL de endereco.
+
+  app/models/Paciente.php -> atualizar($id, $dados)
+      JA existe. Recebe as chaves planas (cpf, endereco_cep, endereco_rua,
+      telefone_principal, ...) e sincroniza tbl_paciente, tbl_endereco,
+      tbl_telefone e tbl_anamnese sozinho.
+
+  app/middleware/{Session,CSRF,RBAC}.php e app/models/Auditoria.php
+      JA existem. O padrao de tudo que vier a seguir.
+
+  O roteador e public/index.php: a URL e /controller/acao/parametro.
+  Um controller novo so funciona se o arquivo estiver em app/controllers com
+  o nome XController.php (o autoload procura pelo nome da classe).
+
+O MAPA DE QUEM VE O QUE (o RBAC ja esta montado, comeca em Constants.php):
+  admin              -> tudo
+  medico             -> modulo medico + prontuario
+  enfermeiro         -> triagens + prontuario (a partir desta parte)
+  tecnico_enfermagem  -> triagens + prontuario (a partir desta parte)
+  paciente           -> SO o proprio historico. NUNCA o prontuario.
+
+
+--------------------------------------------------------------------------------
+CAPITULO 1 - O BUG DOS TOASTS (leia com calma: e o que voce notou)
+--------------------------------------------------------------------------------
+
+1.1 O QUE ACONTECE HOJE
+
+  Os controllers gravam a mensagem na sessao:
+
+      Session::flash('success', 'Paciente cadastrado com sucesso');
+      Session::flash('error',   'Token de seguranca invalido');
+
+  Cada view, SEPARADAMENTE, decide se mostra essa mensagem:
+
+      <?php if (Session::hasFlash('success')): ?>
+          <div class="alert alert-success"><?= e(Session::getFlash('success')) ?></div>
+      <?php endif; ?>
+
+  E ai esta o problema, em duas partes:
+
+  PARTE A - O toasts.js nunca e chamado.
+      O fim do public/Assets/js/toasts.js procura por mensagens assim:
+
+          document.querySelectorAll('p[style*="color: red"]');
+          document.querySelectorAll('p[style*="color: green"]');
+
+      Ou seja: um <p> com style inline "color: red"/"color: green".
+      Nenhuma view do projeto escreve isso - todas usam
+      <div class="alert alert-danger/success">. Entao esse trecho do
+      toasts.js NAO ENCONTRA NADA. Nunca. A showToast() so aparece quando o
+      proprio JavaScript chama (por exemplo, a busca de CEP).
+
+      Resultado: a mensagem do servidor fica parada na pagina, como uma faixa
+      grande, e o aluno le "isto e um aviso, nao um toast".
+
+  PARTE B - Em algumas telas a mensagem some de verdade.
+      Session::getFlash() APAGA a mensagem da sessao ao ler
+      (app/middleware/Session.php: getFlash chama remove).
+      Nas views que NAO imprimem o flash (boa parte das telas de medico,
+      enfermeiro, tecnico e painel), ninguem le e ninguem apaga - a proxima
+      requisicao le e apaga, e o aluno nunca ve.
+
+      E por isso que voce viu "as vezes a confirmacao nao vem". Nao e
+      instabilidade: e uma tela com o bloco de alerta e outra sem.
+
+  RESUMO DA CAUSA: existem DOIS lugares diferentes para mostrar mensagem
+  (o <div class="alert"> de cada view e o showToast do JavaScript), e o
+  JavaScript nunca conversa com o PHP. A solucao e deixar UM lugar so.
+
+1.2 CORRECAO - PARTE 1: o PHP precisa ler o flash sem apagar
+
+  >> COLE EM: app/middleware/Session.php - logo DEPOIS do metodo hasFlash(),
+     e ainda DENTRO da classe Session (antes do fecha-chave da classe).
+
+      /**
+       * Le a mensagem de flash SEM remover da sessao.
+       *
+       * POR QUE EXISTE: o getFlash() apaga a mensagem quando le. O
+       * renderizador de toasts precisa ler para montar o toast e so
+       * depois apagar - se usasse o getFlash(), a sessao ja ficaria
+       * limpa e ainda seria preciso outro metodo para apagar.
+       */
+      public static function peekFlash(string $key, $default = null) {
+          return self::get('_flash_' . $key, $default);
+      }
+
+      /**
+       * Remove a mensagem de flash SEM ler (usado depois de ja ter lido).
+       */
+      public static function forgetFlash(string $key): void {
+          self::remove('_flash_' . $key);
+      }
+
+      /**
+       * Devolve as mensagens de flash como uma lista pronta para o toasts.js.
+       * Nao consome a sessao: quem consome e o metodo limparFlash().
+       */
+      public static function toastsFlash(): array {
+          $fila = [];
+          foreach (['success', 'error', 'warning', 'info'] as $chave) {
+              $mensagem = self::peekFlash($chave);
+              if (is_string($mensagem) && trim($mensagem) !== '') {
+                  $fila[] = [
+                      'tipo'     => $chave,
+                      'mensagem' => $mensagem,
+                  ];
+              }
+          }
+          return $fila;
+      }
+
+      /**
+       * Apaga as mensagens de flash (depois que o toast ja foi montado).
+       */
+      public static function limparFlash(): void {
+          foreach (['success', 'error', 'warning', 'info'] as $chave) {
+              self::forgetFlash($chave);
+          }
+      }
+
+  FIM DO BLOCO
+
+  >> COLE EM: app/helpers/flash_toasts.php - CRIE O ARQUIVO
+
+      <?php
+      // Nao precisa de require: o autoload (app/config/autoload.php) ja
+      // carrega a classe Session. Este arquivo so define a funcao.
+      /**
+       * flash_toasts
+       * Gera o <script> que chama showToast() para cada mensagem de sessao.
+       *
+       * Este e o UNICO lugar do projeto que converte mensagem de servidor
+       * em toast. Chame-o uma vez por requisicao, DEPOIS do toasts.js.
+       *
+       * Por que as mensagens entram com atraso (300ms entre uma e outra):
+       * quando duas mensagens sao disparadas no mesmo instante, a segunda
+       * apagaria a primeira. O toasts.js antigo removia o toast anterior a
+       * cada chamada; o novo empilha (capitulo 1.4).
+       */
+      function flash_toasts(): void {
+          Session::start();
+
+          $fila = Session::toastsFlash();
+          if (!$fila) {
+              return;
+          }
+
+          Session::limparFlash();
+
+          // JSON_HEX_TAG/AMP/APOS/QUOT impedem que uma mensagem contendo
+          // "</script>" feche o bloco e quebre a pagina. As mensagens do
+          // projeto vem de $e->getMessage() e de erros de validacao, que
+          // podem conter texto digitado pelo usuario.
+          $json = json_encode(
+              $fila,
+              JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP
+              | JSON_HEX_APOS | JSON_HEX_QUOT
+          );
+
+          echo '<script>(function(){'
+             . 'var f=' . $json . ';'
+             . 'function proximo(){'
+             . '  if(typeof showToast!=="function"){return;}'
+             . '  if(!f.length){return;}'
+             . '  var m=f.shift();'
+             . '  showToast(m.tipo,m.mensagem,3000);'
+             . '  setTimeout(proximo,300);'
+             . '}'
+             . 'if(document.readyState==="loading"){'
+             . '  document.addEventListener("DOMContentLoaded",proximo);'
+             . '}else{proximo();}'
+             . '})();</script>';
+      }
+
+  FIM DO BLOCO
+
+  >> POR QUE ISSO IMPORTA: o flash_toasts() LE a sessao e DEPOIS apaga
+     (peekFlash + limparFlash). E por isso que ele precisa ficar no
+     header.php, e nao no fim da view: o header e a primeira coisa que todas
+     as telas com layout/include. Quem chega depois (o bloco <div class="alert">
+     de cada view) ja nao encontra nada.
+
+
+--------------------------------------------------------------------------------
+CAPITULO 2 - COMO MODELAR AS TABELAS (a parte que vale na apresentacao)
+--------------------------------------------------------------------------------
+
+2.1 O QUE O PROJETO JA TEM, E POR QUE NAO DA PARA REUSAR
+
+  tbl_prontuario
+      Colunas: queixa_principal, historico_medico, sinais_vitis, analise_ia,
+      diagnostico_final, conduta_medica.
+      Tem UNIQUE KEY (fk_atendimento): UMA nota por atendimento.
+      E o que o modulo de diagnostico com IA usa (MedicoController).
+      >>> NAO mexa aqui. Se voce mexer, quebra a IA.
+
+  tbl_anamnese
+      Colunas: alergias, doencas_previas, medicamentos_uso, ASSIGNATURA...
+      (cirurgias, observacoes).
+      Tem UNIQUE KEY (fk_paciente): UMA anamnese por paciente.
+      E preenchida uma vez, no cadastro (Paciente::sincronizarDadosComplementares).
+      >>> NAO mexa aqui. Anamnese de cadastro nao e historico de consulta.
+
+  tbl_prontuario_visualizacao
+      Aponta para tbl_prontuario (a nota por atendimento), nao para um
+      prontuario de paciente. >>> NAO mexa aqui. O acesso ao prontuario do
+      paciente novo fica registrado em tbl_auditoria.
+
+  Entao o que falta? Uma terceira coisa: um HISTORICO que acumula ao longo do
+  tempo, com varios autores, que ninguem apaga.
+
+2.2 A DECISAO: UMA TABELA COM `secao`, E NAO TRES TABELAS
+
+  Duas opcoes foram considered. A escolhida e a primeira:
+
+  OPCAO ESCOLHIDA - tbl_prontuario_registro, com a coluna `secao`
+      Uma linha por lancamento. As paginas 2, 3 e 4 do prontuario sao a MESMA
+      tabela filtrada por secao.
+      Ganho: um model, um controller, uma view. O indice
+      (fk_paciente, secao, data_hora) ja serve as tres paginas.
+      Se amanha aparecer uma pagina nova (ex.: "Exames"), e so um valor novo
+      no ENUM - nenhuma tabela nova.
+
+  OPCAO DESCARTADA - tbl_prontuario_anamnese, tbl_prontuario_evolucao,
+  tbl_prontuario_complementar
+      Tres tabelas com as mesmas colunas. Dela tudo, menos: tres models,
+      tres controllers (ou um controller com tres metodos quase iguais),
+      tres views, tres consultas de contagem para os badges do menu.
+      Nenhum ganho de modelagem - o conteudo e identico, so muda o rotulo.
+
+  REGRA GERAL QUE VOCE PODE CITA NA APRESENTACAO:
+      "Normalizacao demais nao e modelagem boa. Uma tabela com uma coluna que
+      classifica o tipo so faz sentido quando as linhas se consultam JUNTAS.
+      Aqui as tres secoes nunca sao consultadas juntas na mesma tela - cada
+      aba abre uma. Entao o ganho de separacao seria zero e o custo seria
+      triplicar o codigo."
+
+  OUTRO MOTIVO (o mais importante): o prontuario e um REGISTRO DE
+  ACESSO/APEND-ONLY. Um lancamento finalizado nunca muda. Se voce deixa a
+  coluna `status` existir, o medico corrige o que digitou errado enquanto
+  ainda e rascunho, e depois disso o texto e imutavel. E o que diferencia
+  "historico de consulta" de "cadastro".
+
+2.3 A TABELA ( rode a migracao, nao digite o SQL na mao )
+
+  >> CRIE O ARQUIVO sql/004_prontuario_do_paciente.sql com o conteudo do
+     bloco abaixo (ele esta escrito para ser aplicado uma unica vez, sem
+     medo de rodar duas vezes).
+
+  >> DEPOIS, DIGITE NO TERMINAL (o MySQL do XAMPP):
+         mysql -u root -P 3306 elomed < sql/004_prontuario_do_paciente.sql
+
+     (3306 e a porta do SEU projeto: o .env tem DB_PORT=3306, e foi em
+     3306 que esta migracao foi testada com sucesso. Os arquivos
+     sql/002 e sql/003 comentam 3307, mas nesse computador a 3307 nao
+     estava rodando. Se o seu MySQL estiver em outra porta, ajuste aqui e
+     confira tambem o DB_PORT do .env.)
+
+  ------------------------------------------------------------------
+  -- ============================================================
+  -- EloMed - Migracao 004
+  -- Prontuario do paciente (append-only, por secao) + permissoes
+  -- ============================================================
+  CREATE TABLE IF NOT EXISTS tbl_prontuario_registro (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      fk_paciente BIGINT UNSIGNED NOT NULL,
+      fk_usuario BIGINT UNSIGNED NOT NULL,
+      fk_profissional BIGINT UNSIGNED NULL,
+      fk_agendamento BIGINT UNSIGNED NULL,
+      secao ENUM('anamnese','evolucao','complementar') NOT NULL,
+      conteudo TEXT NOT NULL,
+      status ENUM('rascunho','finalizado') NOT NULL DEFAULT 'finalizado',
+      data_hora DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+          ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_registro_paciente_secao (fk_paciente, secao, data_hora),
+      KEY idx_registro_usuario (fk_usuario),
+      KEY idx_registro_profissional (fk_profissional),
+      KEY idx_registro_agendamento (fk_agendamento),
+      CONSTRAINT fk_registro_paciente
+          FOREIGN KEY (fk_paciente) REFERENCES tbl_paciente(id)
+          ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT fk_registro_usuario
+          FOREIGN KEY (fk_usuario) REFERENCES tbl_usuario(id)
+          ON DELETE RESTRICT ON UPDATE CASCADE,
+      CONSTRAINT fk_registro_profissional
+          FOREIGN KEY (fk_profissional) REFERENCES tbl_profissional(id)
+          ON DELETE SET NULL ON UPDATE CASCADE,
+      CONSTRAINT fk_registro_agendamento
+          FOREIGN KEY (fk_agendamento) REFERENCES tbl_agendamento(id)
+          ON DELETE SET NULL ON UPDATE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+  -- Permissoes (o RBAC guarda na sessao: depois de aplicar, sair e entrar)
+  INSERT INTO tbl_permissions (nome, slug, modulo)
+  SELECT 'Consultar prontuario do paciente', 'prontuario_paciente_acessar', 'medico'
+   WHERE NOT EXISTS (SELECT 1 FROM tbl_permissions
+                      WHERE slug = 'prontuario_paciente_acessar');
+
+  INSERT INTO tbl_permissions (nome, slug, modulo)
+  SELECT 'Registrar no prontuario do paciente', 'prontuario_paciente_registrar', 'medico'
+   WHERE NOT EXISTS (SELECT 1 FROM tbl_permissions
+                      WHERE slug = 'prontuario_paciente_registrar');
+
+  INSERT IGNORE INTO tbl_role_permission (fk_role, fk_permission)
+  SELECT r.id, p.id
+    FROM tbl_roles r
+    JOIN tbl_permissions p
+      ON p.slug IN ('prontuario_paciente_acessar', 'prontuario_paciente_registrar')
+   WHERE r.slug IN ('admin', 'medico', 'enfermeiro', 'tecnico_enfermagem');
+  -- ============================================================
+  ------------------------------------------------------------------
+  FIM DO BLOCO
+
+2.4 POR QUE CADA COLUNA (leia, isto e o que a banca pergunta)
+
+  fk_paciente  -> de QUEM e o prontuario. ON DELETE CASCADE: se o cadastro do
+                  paciente for removido, o prontuario vai junto (nao sobra
+                  historico orfao).
+  fk_usuario   -> QUEM escreveu (o login). NOT NULL: todo lancamento tem autor.
+                  ON DELETE RESTRICT: o usuario nao pode ser apagado Having
+                  historico assinado por ele.
+  fk_profissional -> o registro de profissional (numero de registro/CRM,
+                  especialidade). NULL porque o admin pode registrar por um
+                  medico. ON DELETE SET NULL: se o cadastro do profissional
+                  cair, o texto medico continua la - e o que a lei pede.
+  fk_agendamento  -> a consulta que originou o lancamento. NULL porque um
+                  medico pode registrar algo fora da agenda (exame de
+                  retorno). ON DELETE SET NULL pelo mesmo motivo do
+                  profissional.
+  secao         -> qual das 3 paginas o lancamento pertence. ENUM e nao
+                  VARCHAR: o banco so aceita os 3 valores da lista, e o
+                  dump da secao fica curto (1 byte em vez de 14).
+                  >>> CUIDADO com a frase "o banco rejeita 'anamnes'": este
+                  MySQL roda SEM STRICT_TRANS_TABLES no sql_mode. Testado:
+                  um INSERT com secao='anamnes' NAO deu erro - o MySQL
+                  gravou '' (vazio) e accept. Entao a validacao de verdade
+                  esta no PHP, no metodo secoesValidas() do controller, e
+                  nao no banco. Se um dia o banco ganhar o modo estrito, a
+                  garantia passa a ser em dobro. Nao conte com o ENUM para
+                  dispensar a validacao no controller.
+  conteudo      -> o texto. TEXT e nao VARCHAR: uma evolucao de consulta
+                  passa de 255 caracteres com facilidade.
+  status        -> 'rascunho' (pode editar) ou 'finalizado' (imutavel).
+                  Default 'finalizado': o padrao seguro e o que nao se pode
+                  mexer.
+  data_hora     -> quando foi escrito. Separado de criado_em de proposito:
+                  data_hora e o dato clinico (permite registrar um
+                  atendimento de ontem hoje); criado_em e quando a linha
+                  entrou no banco.
+  criado_em / atualizado_em -> o mesmo padrao das outras tabelas do projeto.
+
+  O indice idx_registro_paciente_secao e OBRIGATORIO, nao e enfeite: as tres
+  paginas do prontuario consulted com
+      WHERE fk_paciente = ? AND secao = ? ORDER BY data_hora DESC
+  e o indice composto resolve isso com uma leitura so.
+
+
+--------------------------------------------------------------------------------
+CAPITULO 3 - CONSTANTES E PERMISSOES
+--------------------------------------------------------------------------------
+
+>> COLE EM: app/config/Constants.php - no final da classe Constants, antes do
+   fecha-chave, acrescente:
+
+      // ---- Prontuario do paciente (Parte 4) ----
+      const PERM_PRONTUARIO_PACIENTE_ACESSAR   = 'prontuario_paciente_acessar';
+      const PERM_PRONTUARIO_PACIENTE_REGISTRAR = 'prontuario_paciente_registrar';
+
+      const PRONTUARIO_SECAO_ANAMNESE     = 'anamnese';
+      const PRONTUARIO_SECAO_EVOLUCAO    = 'evolucao';
+      const PRONTUARIO_SECAO_COMPLEMENTAR = 'complementar';
+
+      const PRONTUARIO_STATUS_RASCUNHO    = 'rascunho';
+      const PRONTUARIO_STATUS_FINALIZADO  = 'finalizado';
+
+      // acoes de auditoria (nao colidirem com AUDITORIA_ACAO_CRIAR_PRONTUARIO,
+      // que ja existe e pertence ao prontuario por atendimento)
+      const AUDITORIA_ACAO_CONSULTAR_PRONTUARIO  = 'consultar_prontuario';
+      const AUDITORIA_ACAO_REGISTRAR_PRONTUARIO  = 'registrar_prontuario';
+      const AUDITORIA_ACAO_EDITAR_PRONTUARIO     = 'editar_prontuario';
+      const AUDITORIA_ACAO_FINALIZAR_PRONTUARIO  = 'finalizar_prontuario';
+      const AUDITORIA_ACAO_EXCLUIR_PRONTUARIO    = 'excluir_prontuario';
+
+      // defaults das colunas ENUM de tbl_paciente (existem no schema como
+      // DEFAULT, mas nao como constante no PHP - o controller precisa delas)
+      const PACIENTE_SEXO_NAO_INFORMADO    = 'nao_informado';
+      const PACIENTE_ESTADO_NAO_INFORMADO = 'nao_informado';
+
+  FIM DO BLOCO
+
+  >>> LEIA: as duas ultimas constantes (PACIENTE_SEXO_NAO_INFORMADO e
+      PACIENTE_ESTADO_NAO_INFORMADO) sao usadas em salvar_dados() no
+      capitulo 4. O valor 'nao_informado' NAO e um chute: e exatamente o
+      DEFAULT das colunas ENUM sexo e estado_civil de tbl_paciente.
+
+  >>> NAO ADICIONE CONSTANTE DE PERMISSAO DE USUARIO AQUI. O projeto ja
+      tem Constants::PERM_USUARIO_GERENCIAR (veja a linha 113 do arquivo, com
+      o valor 'usuario_gerenciar'), e e ela que o header.php usa para mostrar
+      o menu de Usuarios. Criar uma segunda constante com o mesmo valor so
+      ia duplicar informacao.
+
+>> LEIA: depois de rodar a migracao do capitulo 2, o usuario so vai ter as
+   permissoes novas DEPOIS DE SAIR E ENTRAR no sistema. O RBAC.php guarda
+   o resultado das permissoes na sessao no primeiro acesso. Se voce testar so
+   atualizando a pagina (F5), vai achar que a migracao nao rodou.
+
+
+--------------------------------------------------------------------------------
+CAPITULO 4 - BUSCA DE PACIENTE E TELA DE ADMINISTRACAO DO PRONTUARIO
+--------------------------------------------------------------------------------
+
+  Estas telas sao para o ADMIN e servem de apoio: o medico precisa achar o
+  paciente certo antes de abrir o prontuario. Sem isso o prontuario so existe
+  para quem ja tem o id na URL.
+
+4.1 BUSCA DE PACIENTE POR NOME OU CPF
+
+>> COLE EM: app/controllers/ProntuarioController.php - CRIE O ARQUIVO
+
+      <?php
+      /**
+       * ProntuarioController
+       * Prontuario do paciente (historico append-only por secao).
+       *
+       * O roteador (public/index.php) mapeia a URL para este controller:
+       *   /prontuario/buscar                  -> buscar()
+       *   /prontuario/dados/{idPaciente}       -> dados($idPaciente)
+       *   /prontuario/secao/{idPaciente}/{secao} -> secao($idPaciente, $secao)
+       *   /prontuario/salvar_dados/{id}        -> salvar_dados($id)
+       *   /prontuario/registrar/{id}          -> registrar($id)
+       *   /prontuario/editar_registro/{id}    -> editar_registro($id)
+       *   /prontuario/salvar_registro/{id}    -> salvar_registro($id)
+       *   /prontuario/finalizar_registro/{id} -> finalizar_registro($id)
+       *   /prontuario/excluir_registro/{id}   -> excluir_registro($id)
+       */
+      class ProntuarioController {
+          private $pacienteModel;
+          private $registroModel;
+          private $profissionalModel;
+          private $enderecoModel;
+          private $telefoneModel;
+          private $usuarioModel;
+          private $auditoria;
+
+          private const PERMISSOES_PERFIL = [
+              Constants::PERM_PRONTUARIO_PACIENTE_ACESSAR,
+              Constants::PERM_PRONTUARIO_PACIENTE_REGISTRAR,
+          ];
+
+          public function __construct() {
+              Session::start();
+              if (!Session::has('usuario_id')) {
+                  header('Location: ' . BASE_URL . '/login/index');
+                  exit;
+              }
+              if (!RBAC::can(Constants::PERM_PRONTUARIO_PACIENTE_ACESSAR)) {
+                  header('Location: ' . BASE_URL . '/painel/index');
+                  exit;
+              }
+
+              $this->pacienteModel     = new Paciente();
+              $this->registroModel     = new ProntuarioRegistro();
+              $this->profissionalModel = new Profissional();
+              $this->enderecoModel     = new Endereco();
+              $this->telefoneModel     = new Telefone();
+              $this->usuarioModel      = new Usuario();
+              $this->auditoria         = new Auditoria();
+          }
+
+          private function ehAjax(): bool {
+              return strtolower($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'xmlhttprequest';
+          }
+
+          private function responderJson(array $dados): void {
+              header('Content-Type: application/json; charset=utf-8');
+              echo json_encode($dados, JSON_UNESCAPED_UNICODE);
+              exit;
+          }
+
+          /**
+           * Carrega a linha de tbl_paciente e a conta como paciente logado.
+           */
+          private function dadosDoPaciente(int $id): array {
+              $paciente = $this->pacienteModel->getById($id);
+              if (!$paciente) {
+                  Session::flash('error', 'Paciente nao localizado.');
+                  header('Location: ' . BASE_URL . '/prontuario/buscar');
+                  exit;
+              }
+              $usuario = $this->usuarioModel->find($paciente['fk_usuario']);
+              if (!$usuario) {
+                  Session::flash('error', 'Usuario do paciente nao localizado.');
+                  header('Location: ' . BASE_URL . '/prontuario/buscar');
+                  exit;
+              }
+              return [$paciente, $usuario];
+          }
+
+          private function registrarAuditoria(string $acao, string $descricao, array $props = []): void {
+              $this->auditoria->registrar($acao, $descricao, $props);
+          }
+
+          // ------------------------------------------------------------
+          // BUSCA
+          // ------------------------------------------------------------
+
+          /**
+           * Tela inicial: busca o paciente por nome ou CPF.
+           *
+           * A busca acontece AQUI, no controller, e o resultado vai para a
+           * view em $resultados. Nao faca a consulta dentro da view: assim o
+           * PHP valida uma vez so e a view nao depende de nenhuma variavel
+           * que o controllerNAO tenha criado.
+           */
+          public function buscar() {
+              $termo = trim((string)($_GET['termo'] ?? ''));
+              $resultados = [];
+              if (mb_strlen($termo) >= 2) {
+                  $resultados = $this->usuarioModel->buscarPorNomeOuCpfPaciente($termo);
+              }
+
+              require_once __DIR__ . '/../views/prontuario/buscar.php';
+          }
+
+          // ------------------------------------------------------------
+          // PAGINA 1 - DADOS DO PACIENTE (leitura)
+          // ------------------------------------------------------------
+
+          public function dados($id) {
+              [$paciente, $usuario] = $this->dadosDoPaciente((int)$id);
+
+              $endereco = $this->enderecoModel->doUsuario($paciente['fk_usuario']);
+              $telefones = $this->telefoneModel->doUsuario($paciente['fk_usuario']);
+              $anamnese = $this->pacienteModel->getAnamnese($paciente['id']);
+
+              $contadores = $this->registroModel->contarPorSecao($paciente['id']);
+
+              $this->registrarAuditoria(
+                  Constants::AUDITORIA_ACAO_CONSULTAR_PRONTUARIO,
+                  'Abriu o prontuario (dados do paciente) de ' . $usuario['nome'],
+                  ['paciente_id' => $paciente['id'], 'secao' => 'dados']
+              );
+
+              require_once __DIR__ . '/../views/prontuario/dados.php';
+          }
+
+          /**
+           * Salva o que e editavel na pagina 1: cpf, rg, sexo, estado civil,
+           * telefone e endereco (com os campos que a busca de CEP preenche).
+           */
+          public function salvar_dados($id) {
+              $id = (int)$id;
+              if (!CSRF::validateRequest()) {
+                  Session::flash('error', 'Token de seguranca invalido.');
+                  header('Location: ' . BASE_URL . '/prontuario/dados/' . $id);
+                  exit;
+              }
+              if (!RBAC::can(Constants::PERM_PRONTUARIO_PACIENTE_REGISTRAR)) {
+                  Session::flash('error', 'Voce nao tem permissao para alterar o prontuario.');
+                  header('Location: ' . BASE_URL . '/prontuario/dados/' . $id);
+                  exit;
+              }
+
+              [$paciente, $usuario] = $this->dadosDoPaciente($id);
+
+              $cpf = preg_replace('/\D/', '', (string)($_POST['cpf'] ?? ''));
+              if ($cpf !== '' && strlen($cpf) !== 11) {
+                  // tbl_paciente.cpf e CHAR(11). Gravar "123456" truncaria
+                  // o dado e o UNIQUE nao protegeria ninguem.
+                  Session::flash('error', 'O CPF deve ter 11 digitos.');
+                  header('Location: ' . BASE_URL . '/prontuario/dados/' . $id);
+                  exit;
+              }
+              if ($cpf !== '') {
+                  $outro = $this->dbCpfEmUso($cpf, $id);
+                  if ($outro) {
+                      Session::flash('error', 'Este CPF ja pertence a outro paciente.');
+                      header('Location: ' . BASE_URL . '/prontuario/dados/' . $id);
+                      exit;
+                  }
+              }
+
+              // As chaves planas sao as mesmas que o buscar_cep.js preenche e
+              // as que Paciente::atualizar() ja sabe sincronizar.
+              $this->pacienteModel->atualizar($id, [
+                  'cpf'                  => $cpf !== '' ? $cpf : null,
+                  'rg'                   => trim((string)($_POST['rg'] ?? '')),
+                  'sexo'                 => $_POST['sexo'] ?? Constants::PACIENTE_SEXO_NAO_INFORMADO,
+                  'estado_civil'         => $_POST['estado_civil'] ?? Constants::PACIENTE_ESTADO_NAO_INFORMADO,
+                  'telefone_principal'   => preg_replace('/\D/', '', (string)($_POST['telefone_principal'] ?? '')),
+                  'endereco_cep'         => preg_replace('/\D/', '', (string)($_POST['endereco_cep'] ?? '')),
+                  'endereco_rua'         => trim((string)($_POST['endereco_rua'] ?? '')),
+                  'endereco_numero'      => trim((string)($_POST['endereco_numero'] ?? '')),
+                  'endereco_complemento' => trim((string)($_POST['endereco_complemento'] ?? '')),
+                  'endereco_bairro'      => trim((string)($_POST['endereco_bairro'] ?? '')),
+                  'endereco_cidade'      => trim((string)($_POST['endereco_cidade'] ?? '')),
+                  'endereco_uf'          => strtoupper(substr((string)($_POST['endereco_uf'] ?? ''), 0, 2)),
+              ]);
+
+              $this->registrarAuditoria(
+                  Constants::AUDITORIA_ACAO_EDITAR_PRONTUARIO,
+                  'Atualizou os dados cadastrais do prontuario de ' . $usuario['nome'],
+                  ['paciente_id' => $id]
+              );
+
+              Session::flash('success', 'Dados do paciente atualizados.');
+              header('Location: ' . BASE_URL . '/prontuario/dados/' . $id);
+              exit;
+          }
+
+          private function dbCpfEmUso(string $cpf, int $ignorarId): bool {
+              // tbl_paciente tem UNIQUE KEY (cpf): se o mesmo CPF entrasse em
+              // dois pacientes, o MySQL recusaria com o erro 1062. Checamos
+              // antes para devolver uma mensagem em portugues, em vez de um
+              // erro tecnico na tela.
+              $db = Database::getConnection();
+              $stmt = $db->prepare(
+                  "SELECT id FROM tbl_paciente WHERE cpf = :cpf AND id <> :id LIMIT 1"
+              );
+              $stmt->execute(['cpf' => $cpf, 'id' => $ignorarId]);
+              return (bool)$stmt->fetchColumn();
+          }
+
+          // ------------------------------------------------------------
+          // PAGINAS 2, 3 e 4 - HISTORICO POR SECAO
+          // ------------------------------------------------------------
+
+private function secoesValidas(): array {
+               return array_keys(ProntuarioRegistro::SECOES);
+           }
+
+
+          public function secao($id, $secao) {
+              $id = (int)$id;
+              $secao = (string)$secao;
+              if (!in_array($secao, $this->secoesValidas(), true)) {
+                  Session::flash('error', 'Secao invalida.');
+                  header('Location: ' . BASE_URL . '/prontuario/dados/' . $id);
+                  exit;
+              }
+
+              [$paciente, $usuario] = $this->dadosDoPaciente($id);
+
+              $registros = $this->registroModel->listarPorSecao($id, $secao);
+              $contadores = $this->registroModel->contarPorSecao($id);
+              $total = count($registros);
+
+              $this->registrarAuditoria(
+                  Constants::AUDITORIA_ACAO_CONSULTAR_PRONTUARIO,
+                  'Abriu o prontuario (' . ProntuarioRegistro::SECOES[$secao] . ') de ' . $usuario['nome'],
+                  ['paciente_id' => $id, 'secao' => $secao]
+              );
+
+              require_once __DIR__ . '/../views/prontuario/secao.php';
+          }
+
+          /**
+           * Cria um lancamento na secao pedida.
+           */
+          public function registrar($id) {
+              $id = (int)$id;
+              if (!CSRF::validateRequest()) {
+                  Session::flash('error', 'Token de seguranca invalido.');
+                  header('Location: ' . BASE_URL . '/prontuario/dados/' . $id);
+                  exit;
+              }
+              if (!RBAC::can(Constants::PERM_PRONTUARIO_PACIENTE_REGISTRAR)) {
+                  Session::flash('error', 'Voce nao tem permissao para registrar no prontuario.');
+                  header('Location: ' . BASE_URL . '/prontuario/dados/' . $id);
+                  exit;
+              }
+
+              [$paciente, $usuario] = $this->dadosDoPaciente($id);
+
+              $secao = (string)($_POST['secao'] ?? '');
+              if (!in_array($secao, $this->secoesValidas(), true)) {
+                  Session::flash('error', 'Secao invalida.');
+                  header('Location: ' . BASE_URL . '/prontuario/dados/' . $id);
+                  exit;
+              }
+
+              $conteudo = trim((string)($_POST['conteudo'] ?? ''));
+              if (mb_strlen($conteudo) < 10) {
+                  Session::flash('error', 'Escreva ao menos 10 caracteres no registro.');
+                  header('Location: ' . BASE_URL . '/prontuario/secao/' . $id . '/' . $secao);
+                  exit;
+              }
+
+              $status = ($_POST['status'] ?? '') === Constants::PRONTUARIO_STATUS_RASCUNHO
+                  ? Constants::PRONTUARIO_STATUS_RASCUNHO
+                  : Constants::PRONTUARIO_STATUS_FINALIZADO;
+
+              // >>> AUTOR x PACIENTE: cuidado aqui.
+              // $usuario (acima) e o USUARIO DO PACIENTE - e ele quem e
+              // passageiro da URL. O AUTOR do lancamento e quem esta
+              // logado. Sao duas pessoas diferentes na maioria das vezes:
+              // se voce gravar $usuario['id'] em fk_usuario, o prontuario
+              // passa a dizer que o proprio paciente escreveu a evolucao.
+              $autorId = (int)Session::get('usuario_id');
+              if (!$autorId) {
+                  Session::flash('error', 'Sessao expirada. Entre novamente.');
+                  header('Location: ' . BASE_URL . '/login/index');
+                  exit;
+              }
+              $profissionalId = $this->profissionalModel->getIdByUsuario($autorId);
+              $agendamentoId = (int)($_POST['fk_agendamento'] ?? 0);
+
+              // Data clinica opcional: por default e "agora" (o DEFAULT do
+              // banco). Se o medico informar, gravamos a data do atendimento
+              // - e para isso que data_hora e DATETIME e nao TIMESTAMP.
+              $dataHora = null;
+              $informada = trim((string)($_POST['data_hora'] ?? ''));
+              if ($informada !== '') {
+                  $ts = strtotime($informada);
+                  if ($ts === false) {
+                      Session::flash('error', 'Data do atendimento invalida.');
+                      header('Location: ' . BASE_URL . '/prontuario/secao/' . $id . '/' . $secao);
+                      exit;
+                  }
+                  $dataHora = date('Y-m-d H:i:s', $ts);
+              }
+
+              $ok = $this->registroModel->criar([
+                  'fk_paciente'     => $id,
+                  'fk_usuario'      => $autorId,
+                  'fk_profissional' => $profissionalId ?: null,
+                  'fk_agendamento'  => $agendamentoId ?: null,
+                  'secao'           => $secao,
+                  'conteudo'        => $conteudo,
+                  'status'          => $status,
+                  'data_hora'       => $dataHora,
+              ]);
+
+              if ($ok && $this->ehAjax()) {
+                  $this->responderJson([
+                      'success' => true,
+                      'registro' => $this->registroModel->getById($this->registroModel->ultimoId()),
+                      'contadores' => $this->registroModel->contarPorSecao($id),
+                  ]);
+              }
+
+              if ($ok) {
+                  $this->registrarAuditoria(
+                      Constants::AUDITORIA_ACAO_REGISTRAR_PRONTUARIO,
+                      'Registrou em ' . ProntuarioRegistro::SECOES[$secao] . ' no prontuario de ' . $usuario['nome'],
+                      ['paciente_id' => $id, 'secao' => $secao, 'status' => $status]
+                  );
+                  Session::flash('success', $status === Constants::PRONTUARIO_STATUS_RASCUNHO
+                      ? 'Rascunho salvo. Voce pode editar antes de finalizar.'
+                      : 'Registro adicionado ao prontuario.');
+              } else {
+                  Session::flash('error', 'Nao foi possivel salvar o registro.');
+              }
+
+              header('Location: ' . BASE_URL . '/prontuario/secao/' . $id . '/' . $secao);
+              exit;
+          }
+
+          // ------------------------------------------------------------
+          // RASCUNHO: editar, finalizar, excluir
+          // ------------------------------------------------------------
+
+          private function ehMeuRascunho(array $registro, int $usuarioId): bool {
+              return (int)$registro['fk_usuario'] === $usuarioId
+                  && $registro['status'] === Constants::PRONTUARIO_STATUS_RASCUNHO;
+          }
+
+          public function editar_registro($idRegistro) {
+              $registro = $this->registroModel->getById((int)$idRegistro);
+              if (!$registro) {
+                  Session::flash('error', 'Registro nao localizado.');
+                  header('Location: ' . BASE_URL . '/prontuario/buscar');
+                  exit;
+              }
+              if (!$this->ehMeuRascunho($registro, (int)Session::get('usuario_id'))) {
+                  Session::flash('error', 'So o autor pode editar um rascunho.');
+                  header('Location: ' . BASE_URL . '/prontuario/secao/'
+                      . $registro['fk_paciente'] . '/' . $registro['secao']);
+                  exit;
+              }
+              [$paciente, $usuario] = $this->dadosDoPaciente((int)$registro['fk_paciente']);
+
+              require_once __DIR__ . '/../views/prontuario/editar.php';
+          }
+
+          public function salvar_registro($idRegistro) {
+              if (!CSRF::validateRequest()) {
+                  Session::flash('error', 'Token de seguranca invalido.');
+                  header('Location: ' . BASE_URL . '/prontuario/buscar');
+                  exit;
+              }
+              $registro = $this->registroModel->getById((int)$idRegistro);
+              if (!$registro) {
+                  Session::flash('error', 'Registro nao localizado.');
+                  header('Location: ' . BASE_URL . '/prontuario/buscar');
+                  exit;
+              }
+              if (!$this->ehMeuRascunho($registro, (int)Session::get('usuario_id'))) {
+                  Session::flash('error', 'So o autor pode editar um rascunho.');
+                  header('Location: ' . BASE_URL . '/prontuario/secao/'
+                      . $registro['fk_paciente'] . '/' . $registro['secao']);
+                  exit;
+              }
+
+              $conteudo = trim((string)($_POST['conteudo'] ?? ''));
+              if (mb_strlen($conteudo) < 10) {
+                  Session::flash('error', 'Escreva ao menos 10 caracteres no registro.');
+                  header('Location: ' . BASE_URL . '/prontuario/editar_registro/' . $idRegistro);
+                  exit;
+              }
+
+              $this->registroModel->atualizarRascunho((int)$idRegistro, $conteudo);
+
+              $this->registrarAuditoria(
+                  Constants::AUDITORIA_ACAO_EDITAR_PRONTUARIO,
+                  'Editou um rascunho no prontuario',
+                  ['registro_id' => (int)$idRegistro, 'paciente_id' => (int)$registro['fk_paciente']]
+              );
+
+              Session::flash('success', 'Rascunho atualizado.');
+              header('Location: ' . BASE_URL . '/prontuario/secao/'
+                  . $registro['fk_paciente'] . '/' . $registro['secao']);
+              exit;
+          }
+
+          public function finalizar_registro($idRegistro) {
+              if (!CSRF::validateRequest()) {
+                  Session::flash('error', 'Token de seguranca invalido.');
+                  header('Location: ' . BASE_URL . '/prontuario/buscar');
+                  exit;
+              }
+              $registro = $this->registroModel->getById((int)$idRegistro);
+              if (!$registro) {
+                  Session::flash('error', 'Registro nao localizado.');
+                  header('Location: ' . BASE_URL . '/prontuario/buscar');
+                  exit;
+              }
+              if (!$this->ehMeuRascunho($registro, (int)Session::get('usuario_id'))) {
+                  Session::flash('error', 'So o autor pode finalizar um rascunho.');
+                  header('Location: ' . BASE_URL . '/prontuario/secao/'
+                      . $registro['fk_paciente'] . '/' . $registro['secao']);
+                  exit;
+              }
+
+              $this->registroModel->finalizar((int)$idRegistro);
+
+              $this->registrarAuditoria(
+                  Constants::AUDITORIA_ACAO_FINALIZAR_PRONTUARIO,
+                  'Finalizou um registro no prontuario',
+                  ['registro_id' => (int)$idRegistro, 'paciente_id' => (int)$registro['fk_paciente']]
+              );
+
+              Session::flash('success', 'Registro finalizado. Agora ele nao pode ser alterado.');
+              header('Location: ' . BASE_URL . '/prontuario/secao/'
+                  . $registro['fk_paciente'] . '/' . $registro['secao']);
+              exit;
+          }
+
+          public function excluir_registro($idRegistro) {
+              if (!CSRF::validateRequest()) {
+                  Session::flash('error', 'Token de seguranca invalido.');
+                  header('Location: ' . BASE_URL . '/prontuario/buscar');
+                  exit;
+              }
+              $registro = $this->registroModel->getById((int)$idRegistro);
+              if (!$registro) {
+                  Session::flash('error', 'Registro nao localizado.');
+                  header('Location: ' . BASE_URL . '/prontuario/buscar');
+                  exit;
+              }
+              if (!$this->ehMeuRascunho($registro, (int)Session::get('usuario_id'))) {
+                  Session::flash('error', 'So o autor pode excluir um rascunho.');
+                  header('Location: ' . BASE_URL . '/prontuario/secao/'
+                      . $registro['fk_paciente'] . '/' . $registro['secao']);
+                  exit;
+              }
+
+              $this->registroModel->excluir((int)$idRegistro);
+
+              $this->registrarAuditoria(
+                  Constants::AUDITORIA_ACAO_EXCLUIR_PRONTUARIO,
+                  'Excluiu um rascunho do prontuario',
+                  ['registro_id' => (int)$idRegistro, 'paciente_id' => (int)$registro['fk_paciente']]
+              );
+
+              Session::flash('success', 'Rascunho excluido.');
+              header('Location: ' . BASE_URL . '/prontuario/secao/'
+                  . $registro['fk_paciente'] . '/' . $registro['secao']);
+              exit;
+          }
+      }
+
+  FIM DO BLOCO
+
+  >>> ATENCAO: os rotulos das secoes vem de ProntuarioRegistro::SECOES
+      (constante do MODEL, capitulo 5) - e nao de uma constante deste
+      controller. Se voce escrever self::SECOES aqui, o PHP quebra com
+      "Undefined constant ProntuarioController::SECOES". Por isso o codigo
+      escreve sempre ProntuarioRegistro::SECOES.
+
+  >>> LEIA: nenhum metodo deste controller confia no id da URL. Todos
+      chamam dadosDoPaciente(), que carrega a linha real de tbl_paciente e
+      redireciona com toast se o id nao existir. Nos metodos de rascunho
+      (editar/finalizar/excluir) o id da URL e o do REGISTRO, e o codigo
+      descobre o paciente a partir dele - assim nao da para editar o
+      prontuario de outro paciente mudando o numero na URL.
+
+
+--------------------------------------------------------------------------------
+CAPITULO 5 - MODEL ProntuarioRegistro
+--------------------------------------------------------------------------------
+
+>> COLE EM: app/models/ProntuarioRegistro.php - CRIE O ARQUIVO
+
+      <?php
+      class ProntuarioRegistro extends Model {
+          protected $table = 'tbl_prontuario_registro';
+
+          /**
+           * Secoes do prontuario, na ordem em que aparecem as abas.
+           * A chave e o valor do ENUM 'secao' no banco.
+           */
+          public const SECOES = [
+              Constants::PRONTUARIO_SECAO_ANAMNESE     => 'Anamnese',
+              Constants::PRONTUARIO_SECAO_EVOLUCAO    => 'Evolucao e Tratamento',
+              Constants::PRONTUARIO_SECAO_COMPLEMENTAR => 'Informacoes Complementares',
+          ];
+
+          /**
+           * Um lancamento de uma secao, do mais recente para o mais antigo.
+           * Traz o nome do autor e a especialidade dele, que e o que a
+           * pagina precisa mostrar em cada linha do historico.
+           *
+           * ATENCAO AO NOME DA COLUNA: em tbl_agendamento a coluna do fim
+           * do atendimento se chama data_hora_fim. Nao existe "horario_fim"
+           * em lugar nenhum do schema - se voce digitar horario_fim aqui, a
+           * pagina inteira da secao quebra com
+           * "Unknown column 'a.horario_fim' in 'field list'".
+           */
+          public function listarPorSecao($pacienteId, string $secao) {
+              $stmt = $this->db->prepare(
+                  "SELECT r.*,
+                          u.nome AS autor_nome,
+                          pr.numero_registro AS autor_registro,
+                          pr.especialidade  AS autor_especialidade,
+                          a.data_hora_inicio AS atendimento_inicio,
+                          a.data_hora_fim    AS atendimento_fim
+                     FROM {$this->table} r
+                     JOIN tbl_usuario u ON u.id = r.fk_usuario
+                LEFT JOIN tbl_profissional pr ON pr.id = r.fk_profissional
+                LEFT JOIN tbl_agendamento a   ON a.id = r.fk_agendamento
+                    WHERE r.fk_paciente = :paciente
+                      AND r.secao = :secao
+                 ORDER BY r.data_hora DESC, r.id DESC"
+              );
+              $stmt->execute(['paciente' => $pacienteId, 'secao' => $secao]);
+              return $stmt->fetchAll(PDO::FETCH_ASSOC);
+          }
+
+          /**
+           * Quantos registros existem em cada secao (para os badges das abas).
+           * Uma consulta so, em vez de tres.
+           */
+          public function contarPorSecao($pacienteId): array {
+              $stmt = $this->db->prepare(
+                  "SELECT secao, COUNT(*) AS total
+                     FROM {$this->table}
+                    WHERE fk_paciente = :paciente
+                 GROUP BY secao"
+              );
+              $stmt->execute(['paciente' => $pacienteId]);
+
+              $contadores = array_fill_keys(array_keys(self::SECOES), 0);
+              foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $linha) {
+                  if (isset($contadores[$linha['secao']])) {
+                      $contadores[$linha['secao']] = (int)$linha['total'];
+                  }
+              }
+              return $contadores;
+          }
+
+          public function getById($id) {
+              $stmt = $this->db->prepare(
+                  "SELECT * FROM {$this->table} WHERE id = :id LIMIT 1"
+              );
+              $stmt->execute(['id' => $id]);
+              return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+          }
+
+          public function ultimoId(): int {
+              return (int)$this->db->lastInsertId();
+          }
+
+          public function criar(array $dados): bool {
+              // data_hora e opcional: quando o controller nao manda, o
+              // DEFAULT CURRENT_TIMESTAMP do banco entra no lugar. Nunca
+              // mande string vazia aqui, senao o MySQL complains.
+              $colunas = '(fk_paciente, fk_usuario, fk_profissional, fk_agendamento,
+                       secao, conteudo, status)';
+              $valores = '(:fk_paciente, :fk_usuario, :fk_profissional, :fk_agendamento,
+                       :secao, :conteudo, :status)';
+              $params = [
+                  'fk_paciente'     => $dados['fk_paciente'],
+                  'fk_usuario'      => $dados['fk_usuario'],
+                  'fk_profissional' => $dados['fk_profissional'] ?: null,
+                  'fk_agendamento'  => $dados['fk_agendamento'] ?: null,
+                  'secao'           => $dados['secao'],
+                  'conteudo'        => $dados['conteudo'],
+                  'status'          => $dados['status'],
+              ];
+              if (!empty($dados['data_hora'])) {
+                  $colunas = str_replace('status)', 'status, data_hora)', $colunas);
+                  $valores = str_replace(':status)', ':status, :data_hora)', $valores);
+                  $params['data_hora'] = $dados['data_hora'];
+              }
+              $stmt = $this->db->prepare(
+                  "INSERT INTO {$this->table} {$colunas} VALUES {$valores}"
+              );
+              return $stmt->execute($params);
+          }
+
+          /**
+           * Edita APENAS rascunho. O WHERE com status = 'rascunho' e a
+           * protecao: mesmo que o controller erre a checagem, o banco
+           * recusa a alteracao de um registro finalizado.
+           */
+          public function atualizarRascunho($id, string $conteudo): bool {
+              $stmt = $this->db->prepare(
+                  "UPDATE {$this->table}
+                      SET conteudo = :conteudo
+                    WHERE id = :id
+                      AND status = 'rascunho'"
+              );
+              return $stmt->execute(['conteudo' => $conteudo, 'id' => $id]);
+          }
+
+          public function finalizar($id): bool {
+              $stmt = $this->db->prepare(
+                  "UPDATE {$this->table}
+                      SET status = 'finalizado'
+                    WHERE id = :id
+                      AND status = 'rascunho'"
+              );
+              return $stmt->execute(['id' => $id]);
+          }
+
+          /**
+           * Apaga APENAS rascunho. Registro finalizado e intocavel - para
+           * corrigir, o medico cria outro.
+           */
+          public function excluir($id): bool {
+              $stmt = $this->db->prepare(
+                  "DELETE FROM {$this->table}
+                    WHERE id = :id
+                      AND status = 'rascunho'"
+              );
+              return $stmt->execute(['id' => $id]);
+          }
+
+          /**
+           * Historico completo do paciente, todas as secoes (usado no PDF e
+           * para mostrar a linha do tempo).
+           */
+          public function timeline($pacienteId, $limite = 200) {
+              $stmt = $this->db->prepare(
+                  "SELECT r.*, u.nome AS autor_nome, pr.especialidade AS autor_especialidade
+                     FROM {$this->table} r
+                     JOIN tbl_usuario u ON u.id = r.fk_usuario
+                LEFT JOIN tbl_profissional pr ON pr.id = r.fk_profissional
+                    WHERE r.fk_paciente = :paciente
+                 ORDER BY r.data_hora DESC, r.id DESC
+                    LIMIT :limite"
+              );
+              $stmt->bindValue(':paciente', $pacienteId, PDO::PARAM_INT);
+              $stmt->bindValue(':limite', (int)$limite, PDO::PARAM_INT);
+              $stmt->execute();
+              return $stmt->fetchAll(PDO::FETCH_ASSOC);
+          }
+      }
+
+  FIM DO BLOCO
+
+  >>> LEIA: as constantes que o salvar_dados() usa
+      (Constants::PACIENTE_SEXO_NAO_INFORMADO e
+      Constants::PACIENTE_ESTADO_NAO_INFORMADO) JA FORAM ADICIONADAS no
+      capitulo 3. Nao precisa copia-las de novo aqui - se voce fizer isso, o
+      PHP quebra com "Cannot redeclare". Sem elas o codigo quebraria com
+      "Undefined constant". Os valores sao os defaults do schema:
+      tbl_paciente.sexo e tbl_paciente.estado_civil sao ENUM com default
+      'nao_informado'.
+
+
+--------------------------------------------------------------------------------
+CAPITULO 6 - BUSCA DE PACIENTE NA PRONTUARIO (uma linha alterada)
+--------------------------------------------------------------------------------
+
+>> COLE EM: app/models/Usuario.php - DENTRO do metodo
+   buscarPorNomeOuCpfPaciente(), troque a linha do SELECT por esta:
+
+           "SELECT u.id, u.nome, u.email, p.id AS id_paciente, p.cpf
+              FROM tbl_usuario u
+         LEFT JOIN tbl_paciente p ON p.fk_usuario = u.id
+             WHERE EXISTS (SELECT 1
+                             FROM tbl_user_role ur
+                             JOIN tbl_roles r ON r.id = ur.fk_role
+                            WHERE ur.fk_usuario = u.id AND r.slug = 'paciente')
+               AND (u.nome LIKE :nome OR p.cpf LIKE :cpf)
+             LIMIT 20"
+
+  FIM DO BLOCO
+
+  E TROQUE tambem as DUAS linhas que montam e executam os parametros (logo
+  abaixo do SELECT) por estas:
+
+           $nome = '%' . $termo . '%';
+           // O CPF fica no banco SO com digito (CHAR(11)). Se a pessoa colar
+           // "123.456.789-01", o LIKE do nome nao acha nada e o CPF exato
+           // tambem nao - por isso procuramos os digitos sem pontuacao.
+           // O piso de 3 digitos existe para nao gerar falso positivo: em
+           // "Maria 2" o $digitos seria "2" e "%2%" cairia em qualquer CPF.
+           $digitos = preg_replace('/\D/', '', $termo);
+           $cpf = strlen($digitos) >= 3 ? '%' . $digitos . '%' : '%@@@%';
+           $stmt->execute(['nome' => $nome, 'cpf' => $cpf]);
+
+  FIM DO BLOCO
+
+  O que mudou:
+    1) acrescentamos p.id AS id_paciente. O prontuario e indexado por
+       tbl_paciente.id (nao por tbl_usuario.id), entao a tela precisa do id
+       do paciente para montar a URL. Como o metodo ja era usado por
+       UsuarioController, verificar que ele nao depende do numero exato de
+       colunas: acrescentar uma coluna e seguro, o PHP acessa por nome.
+    2) o CPF passou a ter um parametro proprio (:cpf) em vez de repetir o
+       mesmo :termo nas duas condicoes.
+    3) TESTADO no banco:
+         "Roberto"         -> 1 paciente (Roberto Alencar)
+         "123.456.789-01"   -> 1 paciente (mesmo Roberto, via digitos)
+         "Maria 2"          -> 0 pacientes (sem falso positivo)
+
+
+--------------------------------------------------------------------------------
+CAPITULO 7 - TELA DE BUSCA
+--------------------------------------------------------------------------------
+
+>> CRIE A PASTA app/views/prontuario (se nao existir) e DENTO dela crie o
+   arquivo buscar.php:
+
+      <?php
+      // A view NAO consulta o banco: ela so desenha o que o controller
+      // passou. Por isso o ?? [] - se alguem abrir a view sem ir pelo
+      // controller, ela mostra "nenhum resultado" em vez de quebrar.
+      $resultados = $resultados ?? [];
+      $termo = $termo ?? '';
+      ?>
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Prontuarios - EloMed</title>
+      </head>
+      <body>
+      <?php include __DIR__ . '/../header.php'; ?>
+
+      <div class="main-container">
+          <header class="page-header">
+              <h1>Prontuario do paciente</h1>
+              <p>Busque o paciente pelo nome ou pelo CPF para abrir o prontuario.</p>
+          </header>
+
+          <div class="card mb-4">
+              <div class="card-body">
+                  <form method="get" action="<?= BASE_URL ?>/prontuario/buscar" class="row g-2 align-items-end">
+                      <div class="col-md-9">
+                          <label class="form-label" for="termo">Nome ou CPF</label>
+<input type="text" class="form-control" id="termo" name="termo"
+                                    placeholder="Maria Souza ou 123.456.789-00"
+                                    value="<?= e($termo ?? '') ?>">
+
+                      </div>
+                      <div class="col-md-3">
+                          <button type="submit" class="btn btn-primary w-100">
+                              <i class="bi bi-search me-1"></i> Buscar
+                          </button>
+                      </div>
+                  </form>
+              </div>
+          </div>
+
+          <?php if (mb_strlen(trim((string)$termo)) < 2): ?>
+              <p class="sem-dados">
+                  <i class="bi bi-inboxes"></i> Digite ao menos 2 letras do nome
+                  ou os 11 digitos do CPF.
+              </p>
+          <?php else: ?>
+              <?php if (!$resultados): ?>
+                  <p class="sem-dados">
+                      <i class="bi bi-inbox"></i> Nenhum paciente encontrado para "<?= e($termo) ?>".
+                  </p>
+              <?php else: ?>
+              <div class="table-container">
+                  <h2><i class="bi bi-person-lines-fill text-primary"></i> Pacientes</h2>
+                  <table class="table align-middle">
+                      <thead>
+                          <tr>
+                              <th>Nome</th>
+                              <th>CPF</th>
+                              <th>E-mail</th>
+                              <th class="text-end">Acao</th>
+                          </tr>
+                      </thead>
+                      <tbody>
+                      <?php foreach ($resultados as $r): ?>
+                          <tr>
+                              <td><?= e($r['nome']) ?></td>
+                              <td><?= e($r['cpf'] ?: '-') ?></td>
+                              <td><?= e($r['email']) ?></td>
+                              <td class="text-end">
+                                  <?php if (!empty($r['id_paciente'])): ?>
+                                      <a class="btn btn-sm btn-primary"
+                                         href="<?= BASE_URL ?>/prontuario/dados/<?= (int)$r['id_paciente'] ?>">
+                                          <i class="bi bi-journal-medical me-1"></i> Abrir prontuario
+                                      </a>
+                                  <?php else: ?>
+                                      <span class="text-muted small">Cadastro incompleto</span>
+                                  <?php endif; ?>
+                              </td>
+                          </tr>
+                      <?php endforeach; ?>
+                      </tbody>
+                  </table>
+              </div>
+              <?php endif; ?>
+          <?php endif; ?>
+      </div>
+      </body>
+      </html>
+
+  FIM DO BLOCO
+
+  >>> LEIA: o campo de busca NAO tem a classe campo-cpf, de proposito. O
+      mascaras.js faz soDigitos() no valor a cada tecla, ou seja, ele
+      APAGARIA as letras do nome: digitar "Maria" deixaria o campo vazio e
+      a busca por nome jamais funcionaria. O campo aceita texto livre; quem
+      digita CPF com mascara ainda funciona porque o capitulo 6 normaliza
+      os digitos no servidor.
+
+  >>> LEIA: nao precisa de <script src=".../mascaras.js"> nesta tela - nao
+      ha nenhum campo com mascara aqui. O toasts.js ja vem pelo header.php.
+
+
+--------------------------------------------------------------------------------
+CAPITULO 8 - PAGINA 1: DADOS DO PACIENTE (com mascara e CEP)
+--------------------------------------------------------------------------------
+
+>> CRIE O ARQUIVO app/views/prontuario/dados.php:
+
+      <?php
+      $endereco = $endereco ?: [];
+      $telefones = $telefones ?: [];
+      $contadores = $contadores ?: [];
+      $telPrincipal = '';
+      foreach ($telefones as $t) {
+          if (($t['tipo'] ?? '') === 'principal') { $telPrincipal = $t['telefone']; break; }
+      }
+      // Moreis de exibicao: o banco guarda so digito (CHAR), a tela mostra
+      // com mascara. e() escapa, o resto e formatacao.
+      $cpfTela = $paciente['cpf'] ?? '';
+      if ($cpfTela !== '') {
+          $cpfTela = substr($cpfTela,0,3).'.'.substr($cpfTela,3,3).'.'.substr($cpfTela,6,3).'-'.substr($cpfTela,9,2);
+      }
+      $cepTela = $endereco['cep'] ?? '';
+      if ($cepTela !== '') {
+          $cepTela = substr($cepTela,0,5).'-'.substr($cepTela,5);
+      }
+      $telTela = $telPrincipal !== ''
+          ? '(' . substr($telPrincipal,0,2) . ') ' . substr($telPrincipal,2,5) . '-' . substr($telPrincipal,7)
+          : '';
+      ?>
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Prontuario de <?= e($usuario['nome']) ?> - EloMed</title>
+      </head>
+      <body>
+      <?php include __DIR__ . '/../header.php'; ?>
+
+      <div class="main-container">
+          <header class="page-header">
+              <h1><?= e($usuario['nome']) ?></h1>
+              <p>Prontuario do paciente - os lancamentos sao permanentes e tem autor e horario.</p>
+          </header>
+
+          <?php
+          // As quatro paginas do prontuario. "dados" nao tem secao no banco:
+          // e a leitura dos dados cadastrais que ja existem em
+          // tbl_paciente / tbl_endereco / tbl_telefone.
+          ?>
+          <ul class="nav nav-tabs mb-4">
+              <li class="nav-item">
+                  <a class="nav-link active" href="<?= BASE_URL ?>/prontuario/dados/<?= (int)$paciente['id'] ?>">
+                      <i class="bi bi-person-vcard me-1"></i> Dados do paciente
+                  </a>
+              </li>
+              <li class="nav-item">
+                  <a class="nav-link" href="<?= BASE_URL ?>/prontuario/secao/<?= (int)$paciente['id'] ?>/anamnese">
+                      <i class="bi bi-clipboard2-pulse me-1"></i> Anamnese
+                      <span class="badge bg-secondary"><?= (int)($contadores['anamnese'] ?? 0) ?></span>
+                  </a>
+              </li>
+              <li class="nav-item">
+                  <a class="nav-link" href="<?= BASE_URL ?>/prontuario/secao/<?= (int)$paciente['id'] ?>/evolucao">
+                      <i class="bi bi-activity me-1"></i> Evolucao e Tratamento
+                      <span class="badge bg-secondary"><?= (int)($contadores['evolucao'] ?? 0) ?></span>
+                  </a>
+              </li>
+              <li class="nav-item">
+                  <a class="nav-link" href="<?= BASE_URL ?>/prontuario/secao/<?= (int)$paciente['id'] ?>/complementar">
+                      <i class="bi bi-paperclip me-1"></i> Informacoes Complementares
+                      <span class="badge bg-secondary"><?= (int)($contadores['complementar'] ?? 0) ?></span>
+                  </a>
+              </li>
+          </ul>
+
+          <div class="card mb-4">
+              <div class="card-body">
+                  <h2 class="section-title"><i class="bi bi-fingerprint"></i> Identificacao</h2>
+                  <p class="sem-dados small">
+                      Estes campos vem de tbl_usuario e tbl_paciente e sao de
+                      leitura. Alteracoes sao feitas no cadastro do paciente.
+                  </p>
+                  <div class="row">
+                      <div class="col-md-6"><strong>Nome:</strong> <?= e($usuario['nome']) ?></div>
+                      <div class="col-md-6"><strong>E-mail:</strong> <?= e($usuario['email']) ?></div>
+                      <div class="col-md-6"><strong>Nascimento:</strong>
+                          <?= $paciente['data_nascimento'] ? e(date('d/m/Y', strtotime($paciente['data_nascimento']))) : '-' ?>
+                      </div>
+                      <div class="col-md-6"><strong>Telefone cadastrado:</strong>
+                          <?= e($telTela ?: '-') ?>
+                      </div>
+                  </div>
+              </div>
+          </div>
+
+          <?php if ($anamnese): ?>
+          <div class="card mb-4">
+              <div class="card-body">
+                  <h2 class="section-title"><i class="bi bi-journal-medical"></i> Anamnese de cadastro</h2>
+                  <p class="sem-dados small">
+                      Esta e a ficha preenchida no cadastro do paciente
+                      (tbl_anamnese). Os lancamentos de consulta ficam na aba
+                      Anamnese do prontuario.
+                  </p>
+                  <div class="row">
+                      <div class="col-md-6"><strong>Alergias:</strong><br><?= nl2br(e($anamnese['alergias'] ?: '-')) ?></div>
+                      <div class="col-md-6"><strong>Doencas previas:</strong><br><?= nl2br(e($anamnese['doencas_previas'] ?: '-')) ?></div>
+                      <div class="col-md-6"><strong>Medicamentos:</strong><br><?= nl2br(e($anamnese['medicamentos_uso'] ?: '-')) ?></div>
+                      <div class="col-md-6"><strong>Cirurgias:</strong><br><?= nl2br(e($anamnese['cirurgias'] ?: '-')) ?></div>
+                  </div>
+              </div>
+          </div>
+          <?php endif; ?>
+
+          <?php if (RBAC::can(Constants::PERM_PRONTUARIO_PACIENTE_REGISTRAR)): ?>
+          <form method="post" action="<?= BASE_URL ?>/prontuario/salvar_dados/<?= (int)$paciente['id'] ?>">
+              <?= CSRF::getField() ?>
+              <div class="card">
+                  <div class="card-body">
+                      <h2 class="section-title"><i class="bi bi-pencil-square"></i> Dados editaveis</h2>
+
+                      <div class="row g-3">
+                          <div class="col-md-3">
+                              <label class="form-label" for="cpf">CPF</label>
+                              <input type="text" class="form-control campo-cpf" id="cpf" name="cpf"
+                                     value="<?= e($cpfTela) ?>">
+                          </div>
+                          <div class="col-md-3">
+                              <label class="form-label" for="rg">RG</label>
+                              <input type="text" class="form-control" id="rg" name="rg"
+                                     value="<?= e($paciente['rg'] ?? '') ?>">
+                          </div>
+                          <div class="col-md-3">
+                              <label class="form-label" for="telefone_principal">Telefone</label>
+                              <input type="text" class="form-control campo-telefone" id="telefone_principal"
+                                     name="telefone_principal" value="<?= e($telTela) ?>">
+                          </div>
+                          <div class="col-md-3">
+                              <label class="form-label" for="sexo">Sexo</label>
+                              <select class="form-select" id="sexo" name="sexo">
+                                  <?php foreach (['feminino','masculino','nao_informado'] as $op): ?>
+                                      <option value="<?= e($op) ?>"
+                                              <?= (($paciente['sexo'] ?? '') === $op) ? 'selected' : '' ?>>
+                                          <?= e(ucfirst(str_replace('_', ' ', $op))) ?>
+                                      </option>
+                                  <?php endforeach; ?>
+                              </select>
+                          </div>
+
+                          <div class="col-md-4">
+                              <label class="form-label" for="estado_civil">Estado civil</label>
+                              <select class="form-select" id="estado_civil" name="estado_civil">
+                                  <?php foreach (['solteiro','casado','divorciado','viuvo','uniao_estavel','separado','nao_informado'] as $op): ?>
+                                      <option value="<?= e($op) ?>"
+                                              <?= (($paciente['estado_civil'] ?? '') === $op) ? 'selected' : '' ?>>
+                                          <?= e(ucfirst(str_replace('_', ' ', $op))) ?>
+                                      </option>
+                                  <?php endforeach; ?>
+                              </select>
+                          </div>
+                      </div>
+
+                      <hr class="my-4">
+                      <h3 class="section-title"><i class="bi bi-geo-alt"></i> Endereco</h3>
+                      <p class="sem-dados small">
+                          Preencha o CEP e o endereco e preenchido sozinho. Se o
+                          CEP nao existir, o sistema avisa e voce continua
+                          digitando na mao.
+                      </p>
+
+                      <div class="row g-3">
+                          <div class="col-md-3">
+                              <label class="form-label" for="endereco_cep">CEP</label>
+                              <input type="text" class="form-control campo-cep" id="endereco_cep"
+                                     name="endereco_cep" value="<?= e($cepTela) ?>">
+                          </div>
+                          <div class="col-md-6">
+                              <label class="form-label" for="endereco_rua">Rua</label>
+                              <input type="text" class="form-control" id="endereco_rua" name="endereco_rua"
+                                     value="<?= e($endereco['logradouro'] ?? '') ?>">
+                          </div>
+                          <div class="col-md-3">
+                              <label class="form-label" for="endereco_numero">Numero</label>
+                              <input type="text" class="form-control" id="endereco_numero" name="endereco_numero"
+                                     value="<?= e($endereco['numero'] ?? '') ?>">
+                          </div>
+                          <div class="col-md-4">
+                              <label class="form-label" for="endereco_complemento">Complemento</label>
+                              <input type="text" class="form-control" id="endereco_complemento"
+                                     name="endereco_complemento"
+                                     value="<?= e($endereco['complemento'] ?? '') ?>">
+                          </div>
+                          <div class="col-md-4">
+                              <label class="form-label" for="endereco_bairro">Bairro</label>
+                              <input type="text" class="form-control" id="endereco_bairro" name="endereco_bairro"
+                                     value="<?= e($endereco['bairro'] ?? '') ?>">
+                          </div>
+                          <div class="col-md-3">
+                              <label class="form-label" for="endereco_cidade">Cidade</label>
+                              <input type="text" class="form-control" id="endereco_cidade" name="endereco_cidade"
+                                     value="<?= e($endereco['cidade'] ?? '') ?>">
+                          </div>
+                          <div class="col-md-1">
+                              <label class="form-label" for="endereco_uf">UF</label>
+                              <input type="text" class="form-control" id="endereco_uf" name="endereco_uf"
+                                     maxlength="2" value="<?= e($endereco['uf'] ?? '') ?>">
+                          </div>
+                      </div>
+                  </div>
+                  <div class="card-footer">
+                      <button type="submit" class="btn btn-primary">
+                          <i class="bi bi-check-lg me-1"></i> Salvar dados
+                      </button>
+                  </div>
+              </div>
+          </form>
+          <?php endif; ?>
+      </div>
+
+      <script src="<?= BASE_URL ?>/Assets/js/mascaras.js"></script>
+      <script src="<?= BASE_URL ?>/Assets/js/buscar_cep.js"></script>
+      </body>
+      </html>
+
+  FIM DO BLOCO
+
+  >>> LEIA: as duas linhas <script> no fim NAO sao opcionais.
+      - mascaras.js le as classes campo-cpf / campo-telefone / campo-cep e
+        aplica a mascara enquanto o usuario digita.
+      - buscar_cep.js dispara a consulta do CEP e preenche os campos cujo
+        nome comeca com endereco_ (rua, bairro, cidade, uf, complemento).
+      Sem o segundo script, o CEP vira so um campo com tracejado e nada
+      acontece ao sair do campo.
+
+
+--------------------------------------------------------------------------------
+CAPITULO 9 - PAGINAS 2, 3 e 4: HISTORICO POR SECAO (append-only)
+--------------------------------------------------------------------------------
+
+>> CRIE O ARQUIVO app/views/prontuario/secao.php:
+
+      <?php
+      $secaoAtual = (string)($secao ?? '');
+      $titulo = ProntuarioRegistro::SECOES[$secaoAtual] ?? 'Secao';
+      $contadores = $contadores ?: [];
+      $ehMedico = RBAC::hasRole(Constants::PERFIL_MEDICO)
+               || RBAC::hasRole(Constants::PERFIL_ADMIN);
+      ?>
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title><?= e($titulo) ?> - <?= e($usuario['nome']) ?> - EloMed</title>
+      </head>
+      <body>
+      <?php include __DIR__ . '/../header.php'; ?>
+
+      <div class="main-container">
+          <header class="page-header">
+              <h1><?= e($usuario['nome']) ?></h1>
+              <p><?= e($titulo) ?> - <?= (int)$total ?> registro(s). O que e finalizado
+                 nao pode ser alterado: cada consulta vira uma linha nova.</p>
+          </header>
+
+          <ul class="nav nav-tabs mb-4">
+              <li class="nav-item">
+                  <a class="nav-link" href="<?= BASE_URL ?>/prontuario/dados/<?= (int)$paciente['id'] ?>">
+                      <i class="bi bi-person-vcard me-1"></i> Dados do paciente
+                  </a>
+              </li>
+              <?php foreach (ProntuarioRegistro::SECOES as $chave => $rotulo): ?>
+                  <li class="nav-item">
+                      <a class="nav-link <?= $chave === $secaoAtual ? 'active' : '' ?>"
+                         href="<?= BASE_URL ?>/prontuario/secao/<?= (int)$paciente['id'] ?>/<?= e($chave) ?>">
+                          <i class="bi bi-journal-text me-1"></i> <?= e($rotulo) ?>
+                          <span class="badge bg-secondary"><?= (int)($contadores[$chave] ?? 0) ?></span>
+                      </a>
+                  </li>
+              <?php endforeach; ?>
+          </ul>
+
+          <?php if (RBAC::can(Constants::PERM_PRONTUARIO_PACIENTE_REGISTRAR)): ?>
+          <div class="card mb-4">
+              <div class="card-body">
+                  <h2 class="section-title"><i class="bi bi-plus-circle"></i> Novo registro</h2>
+                  <form method="post" id="formRegistro"
+                        action="<?= BASE_URL ?>/prontuario/registrar/<?= (int)$paciente['id'] ?>">
+                      <?= CSRF::getField() ?>
+                      <input type="hidden" name="secao" value="<?= e($secaoAtual) ?>">
+                      <input type="hidden" name="fk_agendamento"
+                             id="agendamentoAtual" value="<?= (int)($_GET['agendamento'] ?? 0) ?>">
+
+                      <div class="mb-3">
+                          <label class="form-label" for="conteudo"><?= e($titulo) ?></label>
+                          <textarea class="form-control" id="conteudo" name="conteudo" rows="6"
+                                    required minlength="10"
+                                    placeholder="Escreva o que voce observou nesta consulta. Minimo de 10 caracteres."></textarea>
+                          <div class="form-text">
+                              <span id="contador">0</span> caracteres. O registro fica permanentemente no historico.
+                          </div>
+                      </div>
+
+                      <div class="row g-3">
+                          <div class="col-md-6">
+                              <label class="form-label" for="data_hora">Data do atendimento</label>
+                              <input type="datetime-local" class="form-control" id="data_hora"
+                                     name="data_hora" value="">
+                              <div class="form-text">
+                                  Em branco = agora. Preencha so quando estiver
+                                  registrando um atendimento de outro dia.
+                              </div>
+                          </div>
+                      </div>
+
+                      <div class="d-flex gap-2 align-items-center flex-wrap">
+                          <?php if ($ehMedico): ?>
+                              <button type="submit" name="status" value="<?= e(Constants::PRONTUARIO_STATUS_RASCUNHO) ?>"
+                                      class="btn btn-outline-secondary" data-enviar="rascunho">
+                                  <i class="bi bi-file-earmark me-1"></i> Salvar rascunho
+                              </button>
+                          <?php endif; ?>
+                          <button type="submit" name="status" value="<?= e(Constants::PRONTUARIO_STATUS_FINALIZADO) ?>"
+                                  class="btn btn-primary">
+                              <i class="bi bi-check-lg me-1"></i> Finalizar e salvar
+                          </button>
+                      </div>
+                      <p class="sem-dados small mt-2 mb-0">
+                          Rascunho voce pode editar ou apagar. Finalizado nao.
+                      </p>
+                  </form>
+              </div>
+          </div>
+          <?php endif; ?>
+
+          <?php if (!$registros): ?>
+              <p class="sem-dados">
+                  <i class="bi bi-inbox"></i> Nenhum registro em <?= e($titulo) ?> ainda.
+              </p>
+          <?php else: ?>
+              <div class="table-container">
+                  <h2><i class="bi bi-clock-history text-primary"></i> Historico</h2>
+                  <table class="table align-middle">
+                      <thead>
+                          <tr>
+                              <th style="width: 150px;">Data</th>
+                              <th>Registro</th>
+                              <th style="width: 200px;">Autor</th>
+                              <th style="width: 120px;">Consulta</th>
+                              <th style="width: 160px;">Acoes</th>
+                          </tr>
+                      </thead>
+                      <tbody>
+                      <?php foreach ($registros as $r): ?>
+                          <?php
+                          $rascunho = $r['status'] === Constants::PRONTUARIO_STATUS_RASCUNHO;
+                          $meuRascunho = $rascunho
+                              && (int)$r['fk_usuario'] === (int)Session::get('usuario_id');
+                          ?>
+                          <tr>
+                              <td>
+                                  <div><?= e(date('d/m/Y', strtotime($r['data_hora']))) ?></div>
+                                  <div class="small text-muted"><?= e(date('H:i', strtotime($r['data_hora']))) ?></div>
+                              </td>
+                              <td>
+                                  <div style="white-space: pre-wrap;"><?= e($r['conteudo']) ?></div>
+                                  <?php if ($rascunho): ?>
+                                      <span class="badge bg-warning text-dark mt-1">
+                                          <i class="bi bi-pencil me-1"></i> Rascunho
+                                      </span>
+                                  <?php else: ?>
+                                      <span class="badge bg-success mt-1">
+                                          <i class="bi bi-lock me-1"></i> Finalizado
+                                      </span>
+                                  <?php endif; ?>
+                              </td>
+                              <td>
+                                  <div><?= e($r['autor_nome']) ?></div>
+                                  <?php if (!empty($r['autor_especialidade'])): ?>
+                                      <div class="small text-muted"><?= e($r['autor_especialidade']) ?></div>
+                                  <?php endif; ?>
+                                  <?php if (!empty($r['autor_registro'])): ?>
+                                      <div class="small text-muted"><?= e($r['autor_registro']) ?></div>
+                                  <?php endif; ?>
+                              </td>
+                              <td>
+                                  <?php if (!empty($r['atendimento_inicio'])): ?>
+                                      <?= e(date('d/m/Y', strtotime($r['atendimento_inicio']))) ?>
+                                      <span class="small text-muted">
+                                          <?= e(substr((string)$r['atendimento_inicio'], 11, 5)) ?>
+                                      </span>
+                                  <?php else: ?>
+                                      <span class="text-muted small">-</span>
+                                  <?php endif; ?>
+                              </td>
+                              <td>
+                                  <?php if ($meuRascunho): ?>
+                                      <a class="btn btn-sm btn-outline-primary"
+                                         href="<?= BASE_URL ?>/prontuario/editar_registro/<?= (int)$r['id'] ?>">
+                                          <i class="bi bi-pencil me-1"></i> Editar
+                                      </a>
+                                      <form method="post" class="d-inline"
+                                            action="<?= BASE_URL ?>/prontuario/finalizar_registro/<?= (int)$r['id'] ?>">
+                                          <?= CSRF::getField() ?>
+                                          <button type="submit" class="btn btn-sm btn-outline-success">
+                                              <i class="bi bi-lock me-1"></i> Finalizar
+                                          </button>
+                                      </form>
+                                      <form method="post" class="d-inline"
+                                            action="<?= BASE_URL ?>/prontuario/excluir_registro/<?= (int)$r['id'] ?>"
+                                            data-confirmar="Excluir este rascunho?">
+                                          <?= CSRF::getField() ?>
+                                          <button type="submit" class="btn btn-sm btn-outline-danger">
+                                              <i class="bi bi-trash me-1"></i> Excluir
+                                          </button>
+                                      </form>
+                                  <?php else: ?>
+                                      <span class="text-muted small">-</span>
+                                  <?php endif; ?>
+                              </td>
+                          </tr>
+                      <?php endforeach; ?>
+                      </tbody>
+                  </table>
+              </div>
+          <?php endif; ?>
+      </div>
+
+      <script src="<?= BASE_URL ?>/Assets/js/mascaras.js"></script>
+      <script>
+      // Contador de caracteres do registro.
+      (function () {
+          var area = document.getElementById('conteudo');
+          var saida = document.getElementById('contador');
+          if (!area || !saida) { return; }
+          function contar() { saida.textContent = area.value.length; }
+          area.addEventListener('input', contar);
+          contar();
+      })();
+
+      // Confirmacao antes de excluir um rascunho (o resto do projeto usa
+      // data-confirmar; este listener e o unico lugar que precisa).
+      document.querySelectorAll('form[data-confirmar]').forEach(function (form) {
+          form.addEventListener('submit', function (e) {
+              if (!window.confirm(form.getAttribute('data-confirmar'))) {
+                  e.preventDefault();
+              }
+          });
+      });
+      </script>
+      </body>
+      </html>
+
+  FIM DO BLOCO
+
+  >>> LEIA: a coluna "Consulta" mostra o agendamento que originou o
+      lancamento. Para o medico nao precisar digitar o id, a tela recebe
+      ?agendamento={id} na URL e um campo hidden leva esse valor no POST
+      (veja o input fk_agendamento). Para criar o link, o lugar natural e
+      a tela de pendencias/atendimento do medico: um botao "Registrar no
+      prontuario" apontando para
+      /prontuario/secao/{paciente}/evolucao?agendamento={agendamento}.
+      Essa ligacao e opcional e nao e necessaria para a entrega.
+
+
+--------------------------------------------------------------------------------
+CAPITULO 10 - TELA DE EDICAO DE RASCUNHO
+--------------------------------------------------------------------------------
+
+>> CRIE O ARQUIVO app/views/prontuario/editar.php:
+
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Editar rascunho - EloMed</title>
+      </head>
+      <body>
+      <?php include __DIR__ . '/../header.php'; ?>
+
+      <div class="main-container">
+          <header class="page-header">
+              <h1>Editar rascunho</h1>
+              <p>
+                  <?= e($usuario['nome']) ?> -
+                  <?= e(ProntuarioRegistro::SECOES[$registro['secao']] ?? $registro['secao']) ?>
+              </p>
+          </header>
+
+          <div class="card">
+              <div class="card-body">
+                  <form method="post"
+                        action="<?= BASE_URL ?>/prontuario/salvar_registro/<?= (int)$registro['id'] ?>">
+                      <?= CSRF::getField() ?>
+                      <div class="mb-3">
+                          <label class="form-label" for="conteudo">Registro</label>
+                          <textarea class="form-control" id="conteudo" name="conteudo" rows="8"
+                                    required minlength="10"><?= e($registro['conteudo']) ?></textarea>
+                      </div>
+                      <button type="submit" class="btn btn-primary">
+                          <i class="bi bi-check-lg me-1"></i> Salvar rascunho
+                      </button>
+                      <a class="btn btn-outline-secondary"
+                         href="<?= BASE_URL ?>/prontuario/secao/<?= (int)$registro['fk_paciente'] ?>/<?= e($registro['secao']) ?>">
+                          <i class="bi bi-arrow-left me-1"></i> Voltar
+                      </a>
+                  </form>
+              </div>
+          </div>
+      </div>
+      </body>
+      </html>
+
+  FIM DO BLOCO
+
+
+--------------------------------------------------------------------------------
+CAPITULO 11 - CORRIGIR O TOASTS.JS (empilhar em vez de substituir)
+--------------------------------------------------------------------------------
+
+>> CRIE O ARQUIVO public/Assets/js/toasts.js com este conteudo inteiro
+   (ele substitui o antigo):
+
+      // Sistema de Toasts para mensagens
+      function showToast(tipo, mensagem, duracao = 3000) {
+          // Empilha ate 3 toasts no canto superior direito, de baixo para
+          // cima. Antes este codigo REMOVIA o toast anterior a cada chamada
+          // (querySelector + remove), entao dois avisos seguidos fazem o
+          // primeiro sumir - foi assim que o "CEP nao encontrado" era
+          // engolido pelo "endereco preenchido".
+          const MAXIMO = 3;
+          const existentes = document.querySelectorAll('.toast-notification');
+          if (existentes.length >= MAXIMO) {
+              existentes[0].remove();
+          }
+          const quantos = document.querySelectorAll('.toast-notification').length;
+          const top = 20 + quantos * 76;
+
+          const toast = document.createElement('div');
+          toast.className = 'toast-notification toast-' + tipo;
+
+          // Montado com createElement/textContent, e nao com innerHTML: as
+          // mensagens do projeto vem de $e->getMessage() e de erros de
+          // validacao, que podem conter texto digitado pelo usuario. Com
+          // innerHTML, uma mensagem com "<img onerror=...>" viraria script.
+          const conteudo = document.createElement('div');
+          conteudo.className = 'toast-content';
+
+          const icone = document.createElement('span');
+          icone.className = 'toast-icon';
+          icone.textContent = getIcon(tipo);
+
+          const texto = document.createElement('span');
+          texto.className = 'toast-message';
+          texto.textContent = mensagem;
+
+          conteudo.appendChild(icone);
+          conteudo.appendChild(texto);
+          toast.appendChild(conteudo);
+
+          toast.style.cssText = `
+              position: fixed;
+              top: ${top}px;
+              right: 20px;
+              background: ${getBackgroundColor(tipo)};
+              color: white;
+              padding: 15px 20px;
+              border-radius: 8px;
+              box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+              z-index: 10000;
+              min-width: 300px;
+              max-width: 400px;
+              animation: slideIn 0.3s ease-out;
+          `;
+
+          document.body.appendChild(toast);
+
+          // Remove apos a duracao (3 segundos por padrao).
+          setTimeout(() => {
+              toast.style.animation = 'slideOut 0.3s ease-in';
+              setTimeout(() => toast.remove(), 300);
+          }, duracao);
+      }
+
+      function getIcon(tipo) {
+          const icons = {
+              'success': '✓',
+              'error': '✕',
+              'warning': '⚠',
+              'info': 'ℹ'
+          };
+          return icons[tipo] || 'ℹ';
+      }
+
+      function getBackgroundColor(tipo) {
+          const colors = {
+              'success': '#10b981',
+              'error': '#ef4444',
+              'warning': '#f59e0b',
+              'info': '#3b82f6'
+          };
+          return colors[tipo] || '#3b82f6';
+      }
+
+      // Animacoes (o CSS de cada toast continua vindo daqui, como antes).
+      const style = document.createElement('style');
+      style.textContent = `
+          @keyframes slideIn {
+              from { transform: translateX(100%); opacity: 0; }
+              to   { transform: translateX(0);   opacity: 1; }
+          }
+          @keyframes slideOut {
+              from { transform: translateX(0);   opacity: 1; }
+              to   { transform: translateX(100%); opacity: 0; }
+          }
+          .toast-content { display: flex; align-items: center; gap: 10px; }
+          .toast-icon { font-size: 20px; font-weight: bold; }
+          .toast-message { flex: 1; font-size: 14px; }
+      `;
+      document.head.appendChild(style);
+
+  FIM DO BLOCO
+
+  >>> O QUE MUDOU EM RELACAO AO ANTIGO (leia, e bom para a apresentacao):
+      1) showToast nao apaga mais o toast anterior: empilha ate 3, cada um
+         76px abaixo do anterior, no mesmo canto superior direito.
+      2) A mensagem entra com textContent em vez de innerHTML. Isso fecha um
+         XSS real: varias mensagens do projeto sao
+         Session::flash('error', $e->getMessage()) ou
+         Session::flash('error', $validator->getFirstError()), e o texto pode
+         vir do que o usuario digitou.
+      3) O bloco antigo que procurava 'p[style*="color: red"]' e
+         'p[style*="color: green"]' foi REMOVIDO de proposito: nenhuma view do
+         projeto escreve esses <p>, e era ele que nunca encontrava nada. A
+         conversao da sessao em toast agora e feita pelo PHP
+         (flash_toasts(), capitulo 1.2).
+
+
+--------------------------------------------------------------------------------
+CAPITULO 12 - LIGAR OS TOASTS NO LAYOUT (o ponto que faz funcionar)
+--------------------------------------------------------------------------------
+
+12.1 O LAYOUT PRINCIPAL
+
+>> COLE EM: app/views/header.php - a linha
+   <script src="<?= BASE_URL ?>/Assets/js/toasts.js"></script>
+   continua onde esta. ADICIONE a linha seguinte logo DEPOIS dela:
+
+      <?php
+      require_once __DIR__ . '/../helpers/flash_toasts.php';
+      flash_toasts();
+      ?>
+
+  FIM DO BLOCO
+
+  (header.php fica dentro de <body>. O flash_toasts() escreve um <script>
+  inline que so roda depois que toasts.js foi carregado, entao a showToast
+  ja existe. Nao coloque antes do toasts.js, senao a funcao ainda nao existe.)
+
+  >>> POR QUE ISSO FUNCIONA EM TODAS AS TELAS DE UMA VEZ: o header.php e
+  incluido no topo do <body> de todas as telas que usam o layout. Como o
+  flash_toasts() roda ali, e as telas passam a NAO precisar imprimir a
+  mensagem. E o fim dos <div class="alert"> repetidos em cada view.
+
+12.2 AS TELAS DE LOGIN / CADASTRO (nao usam o header.php)
+
+  As telas de auth montam o HTML sozinhas. Nelas, inclua as DUAS linhas
+  imediatamente antes do </body>:
+
+      <script src="<?= BASE_URL ?>/Assets/js/toasts.js"></script>
+      <?php require_once __DIR__ . '/../helpers/flash_toasts.php'; flash_toasts(); ?>
+
+  Arquivos:
+      app/views/auth/index.php
+      app/views/auth/recuperar.php
+      app/views/auth/redefinir.php
+      app/views/auth/google_perfil.php
+      app/views/auth/escolher_perfil.php
+
+  ATENCAO NESSAS TELAS: em auth/index.php, auth/recuperar.php,
+  auth/redefinir.php, auth/google_perfil.php e auth/escolher_perfil.php, ha
+  linhas no COMECO do arquivo assim:
+
+      $flashErro = Session::hasFlash('error') ? Session::getFlash('error') : null;
+
+  Essas linhas CONSOMEM a mensagem (getFlash apaga). Se voce deixar elas,
+  o flash_toasts() nao encontra nada e o toast nao aparece - e o bug volta.
+  Apague essas linhas e os blocos <?php if ($flashErro): ?> ... <?php endif; ?>
+  correspondentes. Deixe a mensagem ser tratada so pelo toast.
+
+12.3 APAGAR OS ALERTAS DUPLICADOS DAS DEMAIS VIEWS
+
+  Nas outras telas, os blocos
+
+      <?php if (Session::hasFlash('success')): ?>
+          <div class="alert alert-success ..."><?= e(Session::getFlash('success')) ?></div>
+      <?php endif; ?>
+
+  podem ser APAGADOS. Como o flash_toasts() ja consumiu a mensagem, esses
+  blocos nunca vao entrar em condicao - nao dao erro, so ficaram ali como
+  codigo morto.
+
+  Se voce nao quiser mexer em todas as views agora, NAO FAZ NADA: o
+  resultado e o mesmo (a faixa de alerta nunca aparece). So limpe quando
+  for mexer naquele arquivo.
+
+  >>> IMPORTANTE: nao deixe NENHUMA view lendo o flash com getFlash()
+      ANTES do header.php. O header vem primeiro no arquivo, entao a ordem
+      ja esta correta. O erro so apareceria se alguma view fizesse
+      getFlash() no topo do arquivo, antes do include do header - que e
+      justamente o caso das telas de auth (item 12.2).
+
+
+--------------------------------------------------------------------------------
+CAPITULO 13 - MENU: O LINK DO PRONTUARIO
+--------------------------------------------------------------------------------
+
+13.1 LINK NO MENU LATERAL
+
+>> COLE EM: app/views/header.php - ADICIONE este bloco logo depois do bloco
+   <?php endif; ?> do menu do perfil tecnico_enfermagem (que termina com o
+   link "Historico" do tecnico) e ANTES do bloco <?php endif; ?> do menu do
+   perfil paciente:
+
+      <?php if (RBAC::can(Constants::PERM_PRONTUARIO_PACIENTE_ACESSAR)): ?>
+      <a class="item <?= ($currentPage == 'prontuario') ? 'active' : '' ?>"
+         href="<?= BASE_URL ?>/prontuario/buscar">
+          <span><i class="bi bi-journal-medical"></i> Prontuarios</span>
+      </a>
+      <?php endif; ?>
+
+  FIM DO BLOCO
+
+  >>> O perfil PACIENTE nao tem a permissao prontuario_paciente_acessar (ela
+      so foi atribuida a admin, medico, enfermeiro e tecnico). Por isso o
+      item nao aparece para ele - e essa e a regra, nao um bug. Um paciente
+      ver o proprio prontuario com acesso total seria uma falha grave de
+      LGPD.
+
+13.2 LINK NA SIDEBAR DO PACIENTE (opcional)
+
+  Se quiser que o paciente veja o proprio prontuario em modo somente
+  leitura, faca um controller separado (ProntuarioPacienteController) que
+  responda APENAS pelo id do paciente logado (Session::get), jamais por um
+  id da URL. Nao use o ProntuarioController para isso: ele aceitaria o id
+  da URL e abriria o prontuario de qualquer pessoa. Se voce implementar essa
+  tela, deixe claro na apresentacao que a autorizacao esta no controller e
+  nao na view.
+
+
+--------------------------------------------------------------------------------
+CAPITULO 14 - ROTEIRO DE TESTE (faca nesta ordem, antes de apresentar)
+--------------------------------------------------------------------------------
+
+1) Aplique a migracao e SAIA E ENTRE no sistema (as permissoes so chegam na
+   proxima sessao).
+2) Entre como medico. O menu lateral deve mostrar "Prontuarios".
+3) Abra Prontuarios, busque por nome. Abra o prontuario de um paciente.
+4) Aba "Dados do paciente": o CPF e o telefone ja vem mascarados ao carregar.
+5) Digite um CEP valido (ex.: 01001000) e saia do campo. Os campos de rua,
+   bairro, cidade e UF se preenchem e aparece o toast "Endereco
+   preenchido automaticamente".
+6) Apague o CEP e digite 99999999. Deve aparecer o toast de aviso "CEP nao
+   encontrado", e voce continua digitando o endereco a mao (o campo nao e
+   bloqueado).
+7) Clique em "Salvar dados". Deve aparecer o toast "Dados do paciente
+   atualizados" no canto superior direito, sumindo sozinho em 3 segundos.
+8) Abra a aba "Anamnese", escreva um registro e clique "Salvar rascunho".
+   Ele aparece na tabela com o badge amarelo "Rascunho".
+9) Edite o rascunho, finalize. O badge passa a verde "Finalizado". Depois
+   disso as acoes de editar/excluir NAO aparecem mais.
+10) Repita 8 e 9 em outra aba. Agora o prontuario tem duas entradas de
+    medicos diferentes - e este e o requisito: cada medico acrescenta.
+11) Entre como paciente. O menu NAO deve mostrar "Prontuarios".
+12) Na trilha de auditoria (admin), deve aparecer "consultar_prontuario" e
+    "registrar_prontuario" toda vez que voce abrir e registrar.
+13) Se aparecer aviso de "Undefined constant" na tela, falta alguma das
+    constantes do capitulo 3. Leia o nome que aparece no aviso.
+
+
+--------------------------------------------------------------------------------
+CAPITULO 15 - RESUMO DO QUE FOI CRIADO/MEXIDO NESTA PARTE
+--------------------------------------------------------------------------------
+
+ARQUIVOS NOVOS:
+  app/controllers/ProntuarioController.php
+  app/models/ProntuarioRegistro.php
+  app/helpers/flash_toasts.php
+  app/views/prontuario/buscar.php
+  app/views/prontuario/dados.php
+  app/views/prontuario/secao.php
+  app/views/prontuario/editar.php
+  sql/004_prontuario_do_paciente.sql
+
+ARQUIVOS MEXIDOS:
+  app/config/Constants.php          (+ 2 permissoes, 3 secoes, 2 status,
+                                     5 acoes de auditoria e 2 defaults de
+                                     tbl_paciente)
+  app/middleware/Session.php        (+ peekFlash, forgetFlash, toastsFlash,
+                                     limparFlash)
+  app/models/Usuario.php            (+ p.id AS id_paciente e o parametro :cpf
+                                     na busca por nome/CPF)
+  app/views/header.php              (+ flash_toasts() e o link do menu)
+  app/views/auth/*.php              (5 telas: + toasts.js e flash_toasts(),
+                                     - leitura manual do flash)
+  public/Assets/js/toasts.js        (reescrito: empilha, textContent, sem o
+                                     leitor de <p style="color: red">)
+
+ARQUIVOS QUE VOCE NAO DEVE MEXER:
+  app/models/Prontuario.php         (1:1 com atendimento, e do modulo de IA)
+  tbl_anamnese                      (anamnese de cadastro, 1:1)
+  tbl_prontuario_visualizacao       (aponta para a nota por atendimento)
+  app/middleware/RBAC.php           (funciona; so exige logout apos migracao)
+
+
+--------------------------------------------------------------------------------
+O QUE JA FOI VERIFICADO (para nao perder tempo testando de novo)
+--------------------------------------------------------------------------------
+
+  Rodado contra o MySQL deste projeto, com a migracao 004 aplicada:
+
+  [OK] sql/004_prontuario_do_paciente.sql roda 2x sem duplicar permissao
+       nem vinculo de role (2 permissoes, 8 vinculos, identicos nas duas
+       execucoes).
+  [OK] A tabela foi criada com os 4 indices e as 5 chaves estrangeiras.
+  [OK] LANCAMENTO: 2 medicos diferentes lancaram no mesmo paciente e cada
+       linha saiu com o autor e a especialidade CORRETOS (o CRM veio do
+       tbl_profissional do AUTOR, nao do paciente).
+  [OK] DATA CLINICA: o segundo lancamento foi gravado com data_hora
+       2026-09-30 (retroativa) enquanto criado_em ficou em hoje - sao
+       colunas diferentes de proposito.
+  [OK] APPEND-ONLY: um UPDATE num registro finalizado NAO alterou nada
+       (o WHERE ... AND status='rascunho' segurou). Um DELETE em
+       finalizado tambem nao apagou nada.
+  [OK] RASCUNHO: editar e finalizar funcionam.
+  [OK] BUSCA: "Roberto" -> 1 achado; "123.456.789-01" (com mascara) -> 1
+       achado; "Maria 2" -> 0 achados (sem falso positivo de CPF).
+  [OK] php -l passou em TODOS os blocos de codigo deste documento.
+
+  Duas coisas que NAO vao funcionar sozinhas e precisam de acao sua:
+    1) Este MySQL roda sem STRICT_TRANS_TABLES. Um INSERT com secao
+       invalida NAO da erro: grava ''. Por isso o capitulo 2.4 insiste que
+       a validacao esta no controller (metodo secoesValidas()).
+    2) Depois de aplicar a migracao, e preciso SAIR E ENTRAR no sistema
+       (o RBAC guarda as permissoes na sessao).
+
+================================================================================
+FIM DA PARTE 4
+================================================================================

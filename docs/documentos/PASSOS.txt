@@ -1,0 +1,580 @@
+================================================================================
+  PROJETO ELOMED - PASSO A PASSO DE CORRECOES E PROFISSIONALIZACAO
+  
+================================================================================
+
+Para quem e este arquivo
+----------------------------------------------------------------
+Este guia mostra, passo a passo, o que corrigir no seu projeto para:
+
+1. O login voltar a funcionar (senha admin@gmail.com / 123456);
+2. O sistema virar uma aplicacao PROFISSIONAL:
+   - pasta public/ como unica entrada (front controller);
+   - URLs amigaveis (ex.: public/login/index no lugar de
+     index.php?controller=login&action=index);
+   - .htaccess bloqueando acesso direto ao codigo (app/);
+   - configuração central com BASE_URL;
+3. O botao "Sair" aparecer na sidebar;
+4. Mensagens de confirmacao virarem toasts de 3 segundos.
+
+Legenda de conversao de URL
+----------------------------------------------------------------
+URL ANTIGA                              URL NOVA
+----------------------------------------------------------------
+index.php?controller=login&action=index  ->  public/login/index
+index.php?controller=painel&action=index ->  public/painel/index
+index.php?controller=usuario&action=...  ->  public/usuario/...
+index.php?controller=Medico&action=...   ->  public/medico/...
+index.php?controller=Enfermeiro&action=..->  public/enfermeiro/...
+index.php?controller=TecnicoEnfermagem&..->  public/tecnicoenfermagem/...
+index.php?controller=paciente&action=... ->  public/paciente/...
+index.php?controller=agendamento&action=.->  public/agendamento/...
+index.php?controller=cadastro&action=... ->  public/cadastro/...
+index.php?controller=IA&action=...       ->  public/ia/...
+
+Parametros viram PARTES da URL (amigaveis):
+index.php?controller=usuario&action=editar&id=5
+  ->  public/usuario/editar/5
+
+index.php?controller=Medico&action=aceitar&id=9
+  ->  public/medico/aceitar/9
+
+index.php?controller=Medico&action=iniciar_atendimento&id=9
+  ->  public/medico/iniciar_atendimento/9
+
+index.php?controller=Medico&action=get_perguntas_protocolo&protocolo_id=7
+  ->  public/medico/get_perguntas_protocolo/7
+
+ATENCAO: cada pedaco da URL so aceita letras e numeros. Valores que
+podem ter espaco ou acento (ex.: busca por nome) ficam na query string:
+  public/usuario/procurar?nome=Joao
+
+Obs.: Controller ANTIGO (Rota) -> Segmento da URL (sempre minusculo)
+
+
+================================================================================
+PARTE 1 - O LOGIN NAO FUNCIONAVA (CORRECOES DE BANCO)
+================================================================================
+O sistema usa password_verify() no app/models/Usuario.php. Essa funcao SO
+aceita hash do tipo bcrypt. O arquivo .sql original tinha textos falsos como
+'hash_senha_1' no campo senha - por isso NENHUM login passava.
+
+Alem disso:
+- O perfil dos pacientes no banco era 'Paciente' (com P maiusculo), mas o
+  formulario envia 'paciente'. A confirmacao de login comparava perfis com
+  igualdade exata => nunca batia.
+- A conta de administrador (admin@gmail.com) nao existia (os registros
+  iam so de id 1 a 30).
+
+Passo 1.1 - Rode estes comandos no phpMyAdmin (aba SQL da base elomed):
+
+    USE elomed;
+
+    -- 1) Senha de todos os usuarios vira hash bcrypt (equivale a 123456)
+    UPDATE tbl_usuario SET senha = '$2y$10$fRO9bpDFqivovNa7.BwEt.cyc6iEh6s8RT4QuDst.mxwXjBIVZXEC';
+
+    -- 2) Corrige o perfil dos pacientes (formulario envia 'paciente')
+    UPDATE tbl_usuario SET perfil = 'paciente' WHERE perfil = 'Paciente';
+
+    -- 3) Cria a conta de administrador (nao existia no banco)
+    INSERT INTO tbl_usuario (id, nome, email, senha, perfil)
+    VALUES (31, 'Administrador', 'admin@gmail.com',
+            '$2y$10$fRO9bpDFqivovNa7.BwEt.cyc6iEh6s8RT4QuDst.mxwXjBIVZXEC', 'admin');
+
+
+Passo 1.2 - Teste: http://localhost/projeto_modelo_richard/
+    Usuario: admin@gmail.com   Senha: 123456   Perfil: Administrador
+    Depois de logar deve cair no painel.
+
+
+================================================================================
+PARTE 2 - PROFISSIONALIZAR: PASTA public/ + FRONT CONTROLLER
+================================================================================
+Passo 2.0 - Conferir o Apache (XAMPP) - so se der erro
+  IMPORTANTE: na maioria das instalacoes (e nas da escola) o .htaccess
+  ja funciona SEM mexer em nada. Este passo e so uma CONFERENCIA para o
+  caso de aparecer erro 500 ao acessar as rotas novas.
+
+  Confira em C:\xampp\apache\conf\httpd.conf:
+  1. O modulo de reescrita precisa estar carregado (sem o # na frente):
+       LoadModule rewrite_module modules/mod_rewrite.so
+  2. No bloco <Directory "C:/xampp/htdocs"> o valor precisa ser:
+       AllowOverride All
+     (o AllowOverride none que existe no bloco <Directory /> e o padrao
+     de seguranca do XAMPP e NAO precisa ser alterado)
+
+  Se ambas ja estiverem assim, nao mexa em nada. Se algum dia der 500,
+  e por alguma dessas duas linhas que o .htaccess nao funciona.
+
+Passo 2.1 - Crie o arquivo  app/config/config.php  (novo):
+
+    <?php
+    // Configuracoes globais do sistema
+
+    // URL base do projeto. Se o projeto for movido de pasta, altere aqui.
+    define('BASE_URL', 'http://localhost/projeto_modelo_richard/public');
+    define('APP_NAME', 'EloMed');
+
+Passo 2.2 - Crie o arquivo  app/config/autoload.php  (novo):
+
+    <?php
+    // Autoloader simples: procura a classe nas pastas abaixo sozinho.
+    spl_autoload_register(function ($class) {
+        $pastas = [
+            __DIR__ . '/../controllers/',
+            __DIR__ . '/../models/',
+            __DIR__ . '/../middleware/',
+            __DIR__ . '/../helpers/',
+            __DIR__ . '/../exceptions/',
+            __DIR__ . '/../config/',                 // Config, Constants, Env
+            dirname(__DIR__, 2) . '/config/',        // Database (raiz do projeto)
+        ];
+        foreach ($pastas as $pasta) {
+            $arquivo = $pasta . $class . '.php';
+            if (file_exists($arquivo)) {
+                require_once $arquivo;
+                return;
+            }
+        }
+    });
+
+
+Passo 2.3 - Crie a pasta public/ e dentro dela o arquivo  public/.htaccess:
+
+    # Ativa a reescrita de URLs amigaveis
+    RewriteEngine On
+
+    # Se o arquivo realmente existir (CSS, JS, imagem), nao reescreve
+    RewriteCond %{REQUEST_FILENAME} !-f
+    # Se a pasta realmente existir, tambem nao reescreve
+    RewriteCond %{REQUEST_FILENAME} !-d
+
+    # Tudo que nao for arquivo/pasta vai para o front controller
+    RewriteRule ^(.*)$ index.php?url=$1 [QSA,L]
+
+Passo 2.4 - Crie o arquivo  public/index.php  (front controller):
+
+    <?php
+    // Front Controller - ponto unico de entrada do sistema.
+    // Todas as requisicoes passam por aqui via .htaccess.
+    // Ex.: http://localhost/projeto_modelo_richard/public/login/index
+
+    session_start();
+
+    define('BASE_PATH', dirname(__DIR__));
+
+    require BASE_PATH . '/app/config/config.php';
+    require BASE_PATH . '/app/config/autoload.php';
+
+    // Captura a URL amigavel. Ex: usuario/index/5 -> "usuario/index/5"
+    $url = trim($_GET['url'] ?? '', '/');
+
+    // Se vier sem nada, assume a home padrao
+    if (empty($url)) {
+        $url = 'home/index';
+    }
+
+    $parametros = explode('/', $url);
+
+    // Seguranca: so letras e numeros em cada fatia
+    foreach ($parametros as $p) {
+        if (!preg_match('/^[a-zA-Z0-9]+$/', $p)) {
+            ErroController::erro404();
+            exit;
+        }
+    }
+
+    // Mantem o formato antigo ($_GET['controller'] e $_GET['action'])
+    // para as views (ex.: header.php) continuarem funcionando.
+    $_GET['controller'] = strtolower($parametros[0]);
+    $_GET['action']     = strtolower($parametros[1] ?? 'index');
+
+    $metodo = $_GET['action'];
+
+    // Encontra o controller da URL (aceita classes compostas,
+    // ex.: tecnicoenfermagem -> TecnicoEnfermagemController).
+    $arquivoController = null;
+    $nomeController    = null;
+
+    foreach (glob(BASE_PATH . '/app/controllers/*Controller.php') as $arquivo) {
+        $candidato = basename($arquivo, '.php');
+        if (strtolower($candidato) === $_GET['controller'] . 'controller') {
+            $arquivoController = $arquivo;
+            $nomeController    = $candidato;
+            break;
+        }
+    }
+
+    if (!$arquivoController) {
+        ErroController::erro404();
+        exit;
+    }
+
+    if (!class_exists($nomeController)) {
+        require_once $arquivoController;
+    }
+
+    $objeto = new $nomeController();
+
+    if (method_exists($objeto, $metodo)) {
+        call_user_func_array([$objeto, $metodo], array_slice($parametros, 2));
+    } else {
+        ErroController::erro404();
+    }
+
+Passo 2.5 - Crie o arquivo  app/.htaccess  (bloqueia o acesso ao codigo):
+
+    Require all denied
+
+Passo 2.6 - Substitua TODO o conteudo do index.php da RAIZ por isto
+            (redireciona quem usa a URL antiga para a pasta public/):
+
+    <?php
+    // Ponto de entrada antigo (raiz). O roteamento agora fica em /public.
+    // Este arquivo apenas redireciona quem ainda usa a URL antiga.
+    session_start();
+    header('Location: public/index.php');
+    exit;
+
+Passo 2.7 - Crie os arquivos HomeController.php e ErroController.php
+            em app/controllers/:
+
+    <?php
+    // app/controllers/HomeController.php
+    class HomeController {
+        public function index() {
+            if (isset($_SESSION['usuario_id'])) {
+                header('Location: ' . BASE_URL . '/painel/index');
+            } else {
+                header('Location: ' . BASE_URL . '/login/index');
+            }
+            exit;
+        }
+    }
+
+    <?php
+    // app/controllers/ErroController.php
+    class ErroController {
+        public static function erro404() {
+            http_response_code(404);
+            echo '<!DOCTYPE html>';
+            echo '<html lang="pt-br"><head><meta charset="UTF-8">';
+            echo '<title>Erro 404</title></head><body>';
+            echo '<h1>Erro 404</h1>';
+            echo '<p>Pagina nao encontrada. <a href="' . BASE_URL . '/login/index">Voltar ao inicio</a></p>';
+            echo '</body></html>';
+        }
+    }
+
+Passo 2.8 - Teste agora:
+    http://localhost/projeto_modelo_richard/public/  ->  cai no login
+    
+    http://localhost/projeto_modelo_richard/public/algo/que/nao/existe -> 404
+
+
+================================================================================
+PARTE 3 - TROCAR REDIRECTS DOS CONTROLLERS E LINKS DAS VIEWS
+================================================================================
+Este e o passo mais trabalhoso: procurar todos os "index.php?controller="
+e trocar pelos caminhos amigaveis usando BASE_URL.
+
+Passo 3.1 - Controllers (app/controllers/*.php)
+  Procure por:  header('Location: index.php?controller=...')
+  Troque por:   header('Location: ' . BASE_URL . '/...')
+
+  Exemplos:
+
+    ANTES:  header('Location: index.php?controller=login&action=index');
+    DEPOIS: header('Location: ' . BASE_URL . '/login/index');
+
+    ANTES:  header('Location: index.php?controller=usuario&action=index');
+    DEPOIS: header('Location: ' . BASE_URL . '/usuario/index');
+
+  Redirects DINAMICOS (LoginController::logar, CadastroController::cadastrar
+  e AgendamentoController usam uma variavel $controller):
+
+    ANTES:  header("Location: index.php?controller=$controller&action=index");
+    DEPOIS: header('Location: ' . BASE_URL . '/' . strtolower($controller) . '/index');
+    (o strtolower garante 'Medico' -> 'medico', 'TecnicoEnfermagem' -> 'tecnicoenfermagem')
+
+  Arquivos que precisam da troca: LoginController, CadastroController,
+  PainelController, UsuarioController, MedicoController, EnfermeiroController,
+  TecnicoEnfermagemController, PacienteController, AgendamentoController,
+  IAController.
+
+Passo 3.1b - Metodos que recebem PARAMETRO na URL
+  O front controller passa os pedacos extras da URL como ARGUMENTO do
+  metodo. Ex.: public/usuario/editar/5 chama editar(5).
+  Entao os metodos que hoje leem $_GET['id'] devem passar a receber o id.
+
+  app/controllers/UsuarioController.php:
+
+    ANTES:  public function editar() {
+                $id = $_GET['id'] ?? null;
+    DEPOIS: public function editar($id = null) {
+                $id = $id ?? ($_GET['id'] ?? null);
+
+    ANTES:  public function excluir(){
+                $id = $_GET['id'] ?? null;
+    DEPOIS: public function excluir($id = null){
+                $id = $id ?? ($_GET['id'] ?? null);
+
+  app/controllers/MedicoController.php:
+
+    ANTES:  public function aceitar() {
+                $id_agendamento = isset($_GET['id']) ? (int)$_GET['id'] : null;
+    DEPOIS: public function aceitar($id = null) {
+                $id_agendamento = (int)($id ?? ($_GET['id'] ?? null));
+
+    ANTES:  public function rejeitar() {
+                $id_agendamento = isset($_GET['id']) ? (int)$_GET['id'] : null;
+    DEPOIS: public function rejeitar($id = null) {
+                $id_agendamento = (int)($id ?? ($_GET['id'] ?? null));
+
+    ANTES:  public function iniciar_atendimento() {
+                $id_agendamento = isset($_GET['id']) ? (int)$_GET['id'] : null;
+    DEPOIS: public function iniciar_atendimento($id = null) {
+                $id_agendamento = (int)($id ?? ($_GET['id'] ?? null));
+
+    ANTES:  public function get_perguntas_protocolo() {
+                $protocoloId = isset($_GET['protocolo_id']) ? (int)$_GET['protocolo_id'] : null;
+    DEPOIS: public function get_perguntas_protocolo($protocoloId = null) {
+                $protocoloId = (int)($protocoloId ?? ($_GET['protocolo_id'] ?? null));
+
+Passo 3.1c - Remover os require_once manuais (agora sobra o autoload)
+  Com o autoload (Passo 2.2) no ar, os require_once de CLASSE viram
+  redundancia. Saiba ONDE eles existem e o que apagar (e o que NAO):
+
+  (1) CONTROLLERS - todos estes arquivos tem um bloco de require_once
+      no topo (Constants, Config, Session, CSRF, Validator, Logger e
+      models). Pode apagar o bloco inteiro de cada um:
+        AgendamentoController.php, CadastroController.php,
+        EnfermeiroController.php, IAController.php, LoginController.php,
+        MedicoController.php, PacienteController.php, PainelController.php,
+        TecnicoEnfermagemController.php, UsuarioController.php
+
+  (2) MODELS - cada model comeca com:
+        require_once __DIR__ . '/Model.php';
+      Pode apagar essa linha em: Agendamento, Paciente, Painel,
+      Perguntas_protocolo, profissional, Prontuario, Protocolo,
+      Protocolos, Triagem, Usuario, Visita
+      (o autoload carrega a classe pai Model sozinho quando voce
+      estende ela).
+
+      E o proprio Model.php tem:
+        require_once __DIR__ . '/../../config/Database.php';
+      Pode apagar tambem, pois o autoload cobre a classe Database
+      (pasta config/ foi adicionada no Passo 2.2).
+
+  (3) app/config/Config.php - tem:
+        require_once __DIR__ . '/Constants.php';
+        require_once __DIR__ . '/Env.php';
+      Pode apagar as duas (o autoload cobre app/config/).
+
+  (4) VIEWS - estes arquivos tem 2 linhas no topo:
+        require_once __DIR__ . '/../../middleware/CSRF.php';
+        require_once __DIR__ . '/../../middleware/Session.php';
+      Pode apagar as duas linhas de:
+        cadastro/index.php, login/index.php, medico/diagnostico_ia.php,
+        medico/iniciar_atendimento.php,
+        paciente/solicitar_agendamento.php,
+        usuarios/cadastrar.php, usuarios/cadastrar_paciente.php,
+        usuarios/cadastrar_profissional.php, usuarios/editar.php
+
+  (5) NAO APAGAR: app/models/IA.php usa "require" (sem _once) de um
+      ARQUIVO DE DADOS, nao de classe:
+        $config = require $groqConfigFile;
+        $config = require $openaiConfigFile;
+      Isso carrega um array de configuracao e TEM que continuar la.
+
+  
+
+Passo 3.2 - Links nas views (app/views/**)
+  Procure por:  href="index.php?controller=...
+  Troque por:   href="<?= BASE_URL ?>/...
+
+  Exemplos:
+
+    ANTES:  <a href="index.php?controller=Medico&action=pendencias">
+    DEPOIS: <a href="<?= BASE_URL ?>/medico/pendencias">
+
+    ANTES:  <a href="index.php?controller=usuario&action=editar&id=<?= (int)$u['id'] ?>">
+    DEPOIS: <a href="<?= BASE_URL ?>/usuario/editar/<?= (int)$u['id'] ?>">
+
+  Outros links com id que viram partes da URL:
+  - app/views/usuarios/content.php (Editar / Excluir):
+        <a href="<?= BASE_URL ?>/usuario/editar/<?= (int)$u['id'] ?>">
+        <a href="<?= BASE_URL ?>/usuario/excluir/<?= (int)$u['id'] ?>">
+  - app/views/medico/pendencias.php (Aceitar / Rejeitar):
+        <a href="<?= BASE_URL ?>/medico/aceitar/<?= (int)$ag['id'] ?>">
+        <a href="<?= BASE_URL ?>/medico/rejeitar/<?= (int)$ag['id'] ?>">
+  - app/views/medico/index.php (Iniciar atendimento):
+        <a href="<?= BASE_URL ?>/medico/iniciar_atendimento/<?= htmlspecialchars($con["id"]) ?>">
+  - Seletor em usuarios/cadastrar_profissional.php e cadastrar_paciente.php:
+        ANTES:  index.php?controller=usuario&action=procurar&id=..&nome=..
+        DEPOIS: <?= BASE_URL ?>/usuario/procurar?nome=<?= urlencode($u['nome']) ?>
+        (o id nao e usado ali; o nome fica na query porque pode ter espaco)
+
+  Arquivos de destaque:
+  - app/views/header.php  (menu: todos os links + o botao Sair)
+  - app/views/login/index.php, app/views/cadastro/index.php
+  - app/views/usuarios/*.php
+  - app/views/medico/*.php
+  - app/views/paciente/solicitar_agendamento.php
+  - app/views/topo.php
+
+Passo 3.3 - Formularios
+  Formularios de POST com action="index.php?controller=..." trocam igual:
+
+    ANTES:  <form action="index.php?controller=login&action=logar" method="POST">
+    DEPOIS: <form action="<?= BASE_URL ?>/login/logar" method="POST">
+
+  Em app/views/usuarios/cadastrar_profissional.php e
+  app/views/usuarios/cadastrar_paciente.php ha um formulario de BUSCA
+  muito antigo que usa action="index.php" + inputs escondidos
+  controller/action. Troque por:
+
+    ANTES:
+      <form action="index.php" method="GET">
+          <input type="hidden" name="controller" value="usuario">
+          <input type="hidden" name="action" value="procurar">
+    DEPOIS:
+      <form action="<?= BASE_URL ?>/usuario/procurar" method="GET">
+      (apague os dois inputs escondidos)
+
+  Em app/views/medico/iniciar_atendimento.php ha um fetch em JavaScript:
+
+    ANTES:
+      fetch(`index.php?controller=Medico&action=get_perguntas_protocolo&protocolo_id=${protocoloId}`)
+    DEPOIS:
+      fetch(`<?= BASE_URL ?>/medico/get_perguntas_protocolo/${protocoloId}`)
+
+Passo 3.4 - Arquivos de estilo (CSS)
+  Todas as views usam caminho relativo quebrado "public/Assets/...".
+  Troque por BASE_URL. IMPORTANTE: Assets tem A maiusculo na pasta.
+
+    ANTES:  <link rel="stylesheet" href="public/Assets/css/app.css">
+    DEPOIS: <link rel="stylesheet" href="<?= BASE_URL ?>/Assets/css/app.css">
+
+    ANTES:  <link rel="stylesheet" href="public/Assets/css/index.css">
+    DEPOIS: <link rel="stylesheet" href="<?= BASE_URL ?>/Assets/css/index.css">
+
+  Arquivos afetados: header.php e as views que tem <link> proprio
+  (login, cadastro, usuarios/*, paciente/solicitar_agendamento,
+  enfermeiro/index, tecnico_enfermagem/index, paciente/*, painel/index,
+  medico/*).
+
+Passo 3.5 - app/views/header.php (menu ativo)
+  O front controller ja define $_GET['controller'] e $_GET['action'],
+  mas em minusculo. Ajuste o comeco do arquivo:
+
+    ANTES:
+      $paginaAtual = $_GET['controller'] ?? 'painel';
+      $action      = $_GET['action'] ?? 'index';
+    DEPOIS:
+      $paginaAtual = strtolower($_GET['controller'] ?? 'painel');
+      $action      = strtolower($_GET['action'] ?? 'index');
+
+  E dentro dos menus, troque as comparacoes de "ativo" para minusculo:
+    'Medico'  -> 'medico'
+    'Enfermeiro' -> 'enfermeiro'
+    'TecnicoEnfermagem' -> 'tecnicoenfermagem'
+
+  (Os links de menu dentro do arquivo tambem usam BASE_URL, conforme 3.2.)
+
+
+================================================================================
+PARTE 4 - BOTAO "SAIR" ESCONDIDO NA SIDEBAR
+================================================================================
+Problema: a sidebar tinha position:fixed com min-height:100vh e SEM scroll.
+Com os submenus do admin o menu crescia e o botao "Sair" ficava fora da tela.
+
+Correcao em public/Assets/css/app.css, na regra .sidebar (linha ~118),
+adicionar:
+
+    .sidebar {
+        /* ...regras que ja existiam... */
+        height: 100vh;          /* altura exata da tela */
+        display: flex;
+        flex-direction: column; /* empilha itens em coluna */
+        overflow-y: auto;       /* rola se passar da tela */
+    }
+
+E adicionar esta regra nova (empurra o separador + Sair para o fim):
+
+    .sidebar .menu-separator {
+        margin-top: auto;
+    }
+
+Depois abra com Ctrl+F5 para limpar o cache e conferir.
+
+
+================================================================================
+PARTE 5 (BONUS) - MENSAGENS DE CONFIRMACAO EM TOAST DE 3 SEGUNDOS
+================================================================================
+As mensagens de sucesso/erro dos formularios (flash) eram mostradas como
+<p style="color:red">. Troque por um TOAST (notificacao no canto superior
+direito que some sozinha em 3 segundos).
+
+- Crie o arquivo  app/views/toast.php  com o container, o CSS e a funcao
+  showToast(msg, tipo). O arquivo pronto esta abaixo.
+  Ele le sozinho Session::hasFlash('error'/'success') e exibe o toast.
+- Inclua o toast no final de app/views/header.php:
+      <?php include 'app/views/toast.php'; ?>
+- Apague os blocos <?= Session::getFlash(...) ?> das views que mostravam
+  a mensagem inline (login, cadastro, usuarios/cadastrar*,
+  usuarios/editar, paciente/solicitar_agendamento) e inclua o toast.php
+  antes do </body>.
+- IMPORTANTE: mantenha o confirm() do navegador nas acoes DESTRUTIVAS
+  (Excluir usuario em usuarios/content.php e Rejeitar agendamento em
+  medico/pendencias.php). Toast serve para as confirmacoes gerais, nao
+  para confirmar exclusao.
+
+Se alguma pagina der 500, confira o Passo 2.0 (mod_rewrite carregado e
+AllowOverride All no bloco do htdocs) e se os arquivos da Parte 2
+existem nos lugares certos.
+
+
+
+Arquivo toast.php:
+<div id="toast-container"></div>
+<?php if (class_exists('Session')): ?>
+<?php if (Session::hasFlash('error')): ?>
+<div data-toast-msg="<?= htmlspecialchars(Session::getFlash('error'), ENT_QUOTES, 'UTF-8') ?>" data-toast-type="error"></div>
+<?php endif; ?>
+<?php if (Session::hasFlash('success')): ?>
+<div data-toast-msg="<?= htmlspecialchars(Session::getFlash('success'), ENT_QUOTES, 'UTF-8') ?>" data-toast-type="success"></div>
+<?php endif; ?>
+<?php endif; ?>
+<style>
+#toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+.toast { min-width: 260px; max-width: 380px; padding: 14px 18px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15); font-size: 14px; font-weight: 500; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #fff; opacity: 0; transform: translateX(20px); transition: opacity 0.3s ease, transform 0.3s ease; }
+.toast.show { opacity: 1; transform: translateX(0); }
+.toast.hide { opacity: 0; transform: translateX(20px); }
+.toast-success { background-color: #16a34a; border-left: 5px solid #15803d; }
+.toast-error { background-color: #dc2626; border-left: 5px solid #b91c1c; }
+</style>
+<script>
+function showToast(mensagem, tipo) {
+    tipo = tipo || 'success';
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-' + tipo;
+    toast.textContent = mensagem;
+    container.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+    setTimeout(() => {
+        toast.classList.add('hide');
+        setTimeout(() => toast.remove(), 400);
+    }, 3000);
+}
+document.addEventListener('DOMContentLoaded', () => {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    container.querySelectorAll('[data-toast-msg]').forEach(el => {
+        showToast(el.getAttribute('data-toast-msg'), el.getAttribute('data-toast-type') || 'success');
+        el.remove();
+    });
+});
+</script>

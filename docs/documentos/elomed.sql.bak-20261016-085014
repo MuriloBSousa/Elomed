@@ -1,0 +1,761 @@
+-- ============================================================
+-- ELOMED - BANCO DE DADOS FINAL
+-- MySQL 8.0+ | InnoDB | utf8mb4
+-- ============================================================
+
+DROP DATABASE IF EXISTS elomed;
+CREATE DATABASE elomed
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci;
+
+USE elomed;
+
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- ============================================================
+-- 01. USUÁRIOS E RBAC
+-- ============================================================
+
+CREATE TABLE tbl_usuario (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    nome VARCHAR(100) NOT NULL,
+    email VARCHAR(150) NOT NULL,
+    senha VARCHAR(255) NOT NULL,
+    status ENUM('ativo','inativo','bloqueado') NOT NULL DEFAULT 'ativo',
+    primeiro_acesso BOOLEAN NOT NULL DEFAULT TRUE,
+    ultima_troca_senha DATETIME NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_usuario_email (email),
+    KEY idx_usuario_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_roles (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    nome VARCHAR(100) NOT NULL,
+    slug VARCHAR(50) NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_role_nome (nome),
+    UNIQUE KEY uq_role_slug (slug)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_permissions (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    nome VARCHAR(100) NOT NULL,
+    slug VARCHAR(100) NOT NULL,
+    modulo VARCHAR(50) NOT NULL DEFAULT 'geral',
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_permission_nome (nome),
+    UNIQUE KEY uq_permission_slug (slug)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_user_role (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_usuario BIGINT UNSIGNED NOT NULL,
+    fk_role BIGINT UNSIGNED NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_user_role (fk_usuario, fk_role),
+    KEY idx_user_role_role (fk_role),
+    CONSTRAINT fk_user_role_usuario
+        FOREIGN KEY (fk_usuario) REFERENCES tbl_usuario(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_user_role_role
+        FOREIGN KEY (fk_role) REFERENCES tbl_roles(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_role_permission (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_role BIGINT UNSIGNED NOT NULL,
+    fk_permission BIGINT UNSIGNED NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_role_permission (fk_role, fk_permission),
+    KEY idx_role_permission_permission (fk_permission),
+    CONSTRAINT fk_role_permission_role
+        FOREIGN KEY (fk_role) REFERENCES tbl_roles(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_role_permission_permission
+        FOREIGN KEY (fk_permission) REFERENCES tbl_permissions(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 02. PROFISSIONAIS
+-- ============================================================
+
+CREATE TABLE tbl_profissional (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_usuario BIGINT UNSIGNED NOT NULL,
+    especialidade VARCHAR(150) NOT NULL,
+    tempo_experiencia_anos TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    numero_registro VARCHAR(100) NOT NULL,
+    limite_diario INT UNSIGNED NOT NULL DEFAULT 12,
+    foto VARCHAR(255) NULL,
+    pausa_inicio TIME NULL,
+    pausa_fim TIME NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_profissional_usuario (fk_usuario),
+    UNIQUE KEY uq_profissional_registro (numero_registro),
+    CONSTRAINT fk_profissional_usuario
+        FOREIGN KEY (fk_usuario) REFERENCES tbl_usuario(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT chk_profissional_limite
+        CHECK (limite_diario > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 03. PACIENTES E DADOS CADASTRAIS NORMALIZADOS
+-- ============================================================
+
+CREATE TABLE tbl_paciente (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_usuario BIGINT UNSIGNED NOT NULL,
+    data_nascimento DATE NOT NULL,
+    cpf CHAR(11) NULL,
+    rg VARCHAR(20) NULL,
+    sexo ENUM('feminino','masculino','nao_informado') NOT NULL DEFAULT 'nao_informado',
+    estado_civil ENUM('solteiro','casado','divorciado','viuvo','uniao_estavel','separado','nao_informado') NOT NULL DEFAULT 'nao_informado',
+    foto VARCHAR(255) NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_paciente_usuario (fk_usuario),
+    UNIQUE KEY uq_paciente_cpf (cpf),
+    CONSTRAINT fk_paciente_usuario
+        FOREIGN KEY (fk_usuario) REFERENCES tbl_usuario(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_telefone (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_usuario BIGINT UNSIGNED NOT NULL,
+    telefone VARCHAR(20) NOT NULL,
+    tipo ENUM('principal','secundario','comercial') NOT NULL DEFAULT 'principal',
+    PRIMARY KEY (id),
+    KEY idx_telefone_usuario (fk_usuario),
+    CONSTRAINT fk_telefone_usuario
+        FOREIGN KEY (fk_usuario) REFERENCES tbl_usuario(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_endereco (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_usuario BIGINT UNSIGNED NOT NULL,
+    logradouro VARCHAR(150) NOT NULL,
+    numero VARCHAR(20) NOT NULL,
+    complemento VARCHAR(100) NULL,
+    bairro VARCHAR(100) NOT NULL,
+    cep CHAR(8) NOT NULL,
+    cidade VARCHAR(100) NOT NULL,
+    uf CHAR(2) NOT NULL,
+    principal BOOLEAN NOT NULL DEFAULT TRUE,
+    PRIMARY KEY (id),
+    KEY idx_endereco_usuario (fk_usuario),
+    CONSTRAINT fk_endereco_usuario
+        FOREIGN KEY (fk_usuario) REFERENCES tbl_usuario(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_contato_emergencia (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_paciente BIGINT UNSIGNED NOT NULL,
+    nome VARCHAR(100) NOT NULL,
+    parentesco VARCHAR(50) NULL,
+    telefone VARCHAR(20) NOT NULL,
+    observacao VARCHAR(255) NULL,
+    principal BOOLEAN NOT NULL DEFAULT TRUE,
+    PRIMARY KEY (id),
+    KEY idx_emergencia_paciente (fk_paciente),
+    CONSTRAINT fk_emergencia_paciente
+        FOREIGN KEY (fk_paciente) REFERENCES tbl_paciente(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_convenio (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    nome_operadora VARCHAR(100) NOT NULL,
+    registro_ans VARCHAR(20) NULL,
+    ativo BOOLEAN NOT NULL DEFAULT TRUE,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_convenio_nome (nome_operadora)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_paciente_convenio (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_paciente BIGINT UNSIGNED NOT NULL,
+    fk_convenio BIGINT UNSIGNED NOT NULL,
+    numero_carteirinha VARCHAR(50) NOT NULL,
+    validade DATE NULL,
+    titular_nome VARCHAR(100) NULL,
+    ativo BOOLEAN NOT NULL DEFAULT TRUE,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_paciente_convenio (fk_paciente, fk_convenio, numero_carteirinha),
+    KEY idx_pc_convenio (fk_convenio),
+    CONSTRAINT fk_pc_paciente
+        FOREIGN KEY (fk_paciente) REFERENCES tbl_paciente(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_pc_convenio
+        FOREIGN KEY (fk_convenio) REFERENCES tbl_convenio(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_anamnese (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_paciente BIGINT UNSIGNED NOT NULL,
+    alergias TEXT NULL,
+    doencas_previas TEXT NULL,
+    medicamentos_uso TEXT NULL,
+    cirurgias TEXT NULL,
+    observacoes TEXT NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_anamnese_paciente (fk_paciente),
+    CONSTRAINT fk_anamnese_paciente
+        FOREIGN KEY (fk_paciente) REFERENCES tbl_paciente(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 04. TRIAGEM (Criada antes de agendamento)
+-- ============================================================
+
+CREATE TABLE tbl_triagem (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_paciente BIGINT UNSIGNED NOT NULL,
+    fk_profissional BIGINT UNSIGNED NULL,
+    fk_analisado_por BIGINT UNSIGNED NULL,
+    nome_solicitante VARCHAR(150) NOT NULL,
+    status ENUM('pendente','aprovada','recusada') NOT NULL DEFAULT 'pendente',
+    classificacao ENUM('vermelho','amarelo','verde') NULL,
+    ia_classificacao ENUM('vermelho','amarelo','verde') NULL,
+    ia_justificativa_classificacao VARCHAR(500) NULL,
+    ia_perfil_recomendado ENUM('medico','enfermeiro') NULL,
+    ia_justificativa_perfil VARCHAR(500) NULL,
+    ia_profissional_sugerido BIGINT UNSIGNED NULL,
+    ia_modelo VARCHAR(100) NULL,
+    ia_analisada_em DATETIME NULL,
+    queixa_principal TEXT NULL,
+    descricao_sintomas TEXT NULL,
+    data_inicio_sintomas DATE NULL,
+    justificativa_reprovacao TEXT NULL,
+    justificativa_encaminhamento VARCHAR(500) NULL,
+    data_aprovacao DATETIME NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_triagem_paciente_status (fk_paciente, status),
+    KEY idx_triagem_profissional (fk_profissional),
+    KEY idx_triagem_analisado (fk_analisado_por),
+    KEY idx_triagem_ia_profissional (ia_profissional_sugerido),
+    CONSTRAINT fk_triagem_paciente
+        FOREIGN KEY (fk_paciente) REFERENCES tbl_paciente(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_triagem_profissional
+        FOREIGN KEY (fk_profissional) REFERENCES tbl_profissional(id)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_triagem_analisado
+        FOREIGN KEY (fk_analisado_por) REFERENCES tbl_profissional(id)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_triagem_ia_profissional
+        FOREIGN KEY (ia_profissional_sugerido) REFERENCES tbl_profissional(id)
+        ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 05. AGENDAMENTO
+-- ============================================================
+
+CREATE TABLE tbl_agendamento (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    data_hora_inicio DATETIME NOT NULL,
+    data_hora_fim DATETIME NOT NULL,
+    status ENUM('agendado','em_andamento','pendente','concluido','cancelado','ausente') NOT NULL DEFAULT 'pendente',
+    vezes_reagendado TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    duracao_minutos SMALLINT UNSIGNED NOT NULL DEFAULT 30,
+    justificativa_cancelamento TEXT NULL,
+    classificacao_ia ENUM('vermelho','amarelo','verde') NULL,
+    justificativa_classificacao_ia TEXT NULL,
+    profissional_recomendado_ia VARCHAR(150) NULL,
+    justificativa_recomendacao_ia TEXT NULL,
+    classificacao_final ENUM('vermelho','amarelo','verde') NULL,
+    justificativa_encaminhamento TEXT NULL,
+    modelo_ia VARCHAR(100) NULL,
+    data_analise_ia DATETIME NULL,
+    fk_profissional BIGINT UNSIGNED NOT NULL,
+    fk_profissional_origem BIGINT UNSIGNED NULL,
+    fk_paciente BIGINT UNSIGNED NOT NULL,
+    fk_triagem BIGINT UNSIGNED NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_agendamento_triagem (fk_triagem),
+    KEY idx_agendamento_data_status (data_hora_inicio, status),
+    KEY idx_agendamento_profissional (fk_profissional, data_hora_inicio),
+    KEY idx_agendamento_paciente (fk_paciente, data_hora_inicio),
+    KEY idx_agendamento_origem (fk_profissional_origem),
+    CONSTRAINT fk_agendamento_profissional
+        FOREIGN KEY (fk_profissional) REFERENCES tbl_profissional(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_agendamento_profissional_origem
+        FOREIGN KEY (fk_profissional_origem) REFERENCES tbl_profissional(id)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_agendamento_paciente
+        FOREIGN KEY (fk_paciente) REFERENCES tbl_paciente(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_agendamento_triagem
+        FOREIGN KEY (fk_triagem) REFERENCES tbl_triagem(id)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT chk_agendamento_periodo
+        CHECK (data_hora_fim > data_hora_inicio),
+    CONSTRAINT chk_agendamento_duracao
+        CHECK (duracao_minutos > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 06. ATENDIMENTO E FEEDBACK
+-- ============================================================
+
+CREATE TABLE tbl_atendimento (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_agendamento BIGINT UNSIGNED NOT NULL,
+    fk_profissional BIGINT UNSIGNED NOT NULL,
+    horario_inicio DATETIME NOT NULL,
+    horario_fim DATETIME NULL,
+    status ENUM('agendado','em_andamento','concluido','cancelado','ausente') NOT NULL DEFAULT 'agendado',
+    observacoes TEXT NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_atendimento_agendamento (fk_agendamento),
+    KEY idx_atendimento_profissional (fk_profissional, horario_inicio),
+    CONSTRAINT fk_atendimento_agendamento
+        FOREIGN KEY (fk_agendamento) REFERENCES tbl_agendamento(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_atendimento_profissional
+        FOREIGN KEY (fk_profissional) REFERENCES tbl_profissional(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_feedback (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_atendimento BIGINT UNSIGNED NOT NULL,
+    fk_profissional BIGINT UNSIGNED NOT NULL,
+    fk_paciente BIGINT UNSIGNED NOT NULL,
+    fk_usuario BIGINT UNSIGNED NOT NULL,
+    nota TINYINT UNSIGNED NOT NULL,
+    comentario VARCHAR(500) NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_feedback_atendimento (fk_atendimento),
+    KEY idx_feedback_profissional (fk_profissional),
+    KEY idx_feedback_paciente (fk_paciente),
+    KEY idx_feedback_criado (criado_em),
+    CONSTRAINT chk_feedback_nota CHECK (nota BETWEEN 0 AND 5),
+    CONSTRAINT fk_feedback_atendimento
+        FOREIGN KEY (fk_atendimento) REFERENCES tbl_atendimento(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_feedback_profissional
+        FOREIGN KEY (fk_profissional) REFERENCES tbl_profissional(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_feedback_paciente
+        FOREIGN KEY (fk_paciente) REFERENCES tbl_paciente(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_feedback_usuario
+        FOREIGN KEY (fk_usuario) REFERENCES tbl_usuario(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 07. PRONTUÁRIO
+-- ============================================================
+
+CREATE TABLE tbl_prontuario (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_atendimento BIGINT UNSIGNED NOT NULL,
+    queixa_principal TEXT NULL,
+    historico_medico TEXT NULL,
+    sinais_vitais JSON NULL,
+    analise_ia JSON NULL,
+    diagnostico_final TEXT NULL,
+    conduta_medica TEXT NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_prontuario_atendimento (fk_atendimento),
+    CONSTRAINT fk_prontuario_atendimento
+        FOREIGN KEY (fk_atendimento) REFERENCES tbl_atendimento(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_prontuario_visualizacao (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_prontuario BIGINT UNSIGNED NOT NULL,
+    fk_usuario BIGINT UNSIGNED NOT NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_pv_prontuario (fk_prontuario),
+    KEY idx_pv_usuario (fk_usuario),
+    CONSTRAINT fk_pv_prontuario
+        FOREIGN KEY (fk_prontuario) REFERENCES tbl_prontuario(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_pv_usuario
+        FOREIGN KEY (fk_usuario) REFERENCES tbl_usuario(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 08. PROTOCOLOS MÉDICOS
+-- ============================================================
+
+CREATE TABLE tbl_protocolos (
+    id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    nome VARCHAR(100) NOT NULL,
+    descricao TEXT NULL,
+    categoria ENUM('cronico','agudo','investigacao','acompanhamento') NOT NULL DEFAULT 'agudo',
+    ativo BOOLEAN NOT NULL DEFAULT TRUE,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_protocolo_nome (nome)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_perguntas_protocolo (
+    id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_protocolo INT UNSIGNED NOT NULL,
+    ordem INT UNSIGNED NOT NULL DEFAULT 1,
+    tipo ENUM('texto','numero','select','radio','checkbox','textarea') NOT NULL DEFAULT 'texto',
+    pergunta TEXT NOT NULL,
+    placeholder VARCHAR(255) NULL,
+    obrigatorio BOOLEAN NOT NULL DEFAULT FALSE,
+    opcoes JSON NULL,
+    condicional JSON NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_pergunta_ordem (fk_protocolo, ordem),
+    KEY idx_pergunta_protocolo (fk_protocolo),
+    CONSTRAINT fk_pergunta_protocolo
+        FOREIGN KEY (fk_protocolo) REFERENCES tbl_protocolos(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tbl_resposta_protocolo (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_triagem BIGINT UNSIGNED NOT NULL,
+    fk_pergunta INT UNSIGNED NOT NULL,
+    resposta JSON NOT NULL,
+    respondido_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_resposta_triagem_pergunta (fk_triagem, fk_pergunta),
+    KEY idx_resposta_pergunta (fk_pergunta),
+    CONSTRAINT fk_resposta_triagem
+        FOREIGN KEY (fk_triagem) REFERENCES tbl_triagem(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_resposta_pergunta
+        FOREIGN KEY (fk_pergunta) REFERENCES tbl_perguntas_protocolo(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 09. LEMBRETES
+-- ============================================================
+
+CREATE TABLE tbl_lembrete (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_agendamento BIGINT UNSIGNED NOT NULL,
+    mensagem VARCHAR(255) NOT NULL,
+    status ENUM('enviado','pendente','falha') NOT NULL DEFAULT 'pendente',
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    enviado_em TIMESTAMP NULL,
+    PRIMARY KEY (id),
+    KEY idx_lembrete_agendamento (fk_agendamento),
+    KEY idx_lembrete_status (status),
+    CONSTRAINT fk_lembrete_agendamento
+        FOREIGN KEY (fk_agendamento) REFERENCES tbl_agendamento(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 10. AUDITORIA
+-- ============================================================
+
+CREATE TABLE tbl_auditoria (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_usuario BIGINT UNSIGNED NULL,
+    usuario_nome VARCHAR(100) NULL,
+    usuario_perfil VARCHAR(100) NULL,
+    acao VARCHAR(100) NOT NULL,
+    descricao VARCHAR(500) NOT NULL,
+    propriedades JSON NULL,
+    ip VARCHAR(45) NULL,
+    data_hora DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_auditoria_data (data_hora),
+    KEY idx_auditoria_acao (acao),
+    KEY idx_auditoria_usuario (fk_usuario),
+    CONSTRAINT fk_auditoria_usuario
+        FOREIGN KEY (fk_usuario) REFERENCES tbl_usuario(id)
+        ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 11. USO DE IA
+-- ============================================================
+
+CREATE TABLE tbl_uso_ia (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_usuario BIGINT UNSIGNED NOT NULL,
+    modelo VARCHAR(100) NOT NULL,
+    quantidade_consultas INT UNSIGNED NOT NULL DEFAULT 1,
+    data_consulta DATE NOT NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_uso_ia_usuario_data (fk_usuario, data_consulta),
+    CONSTRAINT fk_uso_ia_usuario
+        FOREIGN KEY (fk_usuario) REFERENCES tbl_usuario(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT chk_uso_ia_quantidade CHECK (quantidade_consultas > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 12. RECUPERAÇÃO DE SENHA
+-- ============================================================
+
+CREATE TABLE tbl_recuperacao_senha (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    fk_usuario BIGINT UNSIGNED NOT NULL,
+    token CHAR(64) NOT NULL,
+    expira_em DATETIME NOT NULL,
+    usado BOOLEAN NOT NULL DEFAULT FALSE,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_recuperacao_token (token),
+    KEY idx_recuperacao_usuario (fk_usuario),
+    KEY idx_recuperacao_validacao (token, usado, expira_em),
+    CONSTRAINT fk_recuperacao_usuario
+        FOREIGN KEY (fk_usuario) REFERENCES tbl_usuario(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 13. ROLES
+-- ============================================================
+
+INSERT INTO tbl_roles (id, nome, slug) VALUES
+(1, 'Administrador', 'admin'),
+(2, 'Médico', 'medico'),
+(3, 'Enfermeiro', 'enfermeiro'),
+(4, 'Técnico de Enfermagem', 'tecnico_enfermagem'),
+(5, 'Paciente', 'paciente');
+
+-- ============================================================
+-- 14. PERMISSÕES
+-- ============================================================
+
+INSERT INTO tbl_permissions (id, nome, slug, modulo) VALUES
+(1, 'Meu Cadastro', 'meu_cadastro', 'geral'),
+(2, 'Visualizar dashboard próprio', 'dashboard_visualizar', 'geral'),
+(3, 'Acessar painel geral', 'painel_acessar', 'sistema'),
+(4, 'Gerenciar usuários', 'usuario_gerenciar', 'sistema'),
+(5, 'Cadastrar profissional', 'usuario_cadastrar_profissional', 'sistema'),
+(6, 'Cadastrar paciente', 'usuario_cadastrar_paciente', 'sistema'),
+(7, 'Ver trilha de auditoria', 'auditoria_visualizar', 'sistema'),
+(8, 'Gerar relatório de auditoria em PDF', 'auditoria_gerar_pdf', 'sistema'),
+(9, 'Acessar monitoramento', 'auditoria_monitorar', 'sistema'),
+(10, 'Gerenciar agendamentos', 'agendamento_gerenciar', 'sistema'),
+(11, 'Solicitar agendamento', 'agendamento_solicitar', 'geral'),
+(12, 'Acessar módulo médico', 'medico_acessar', 'medico'),
+(13, 'Ver pendências médicas', 'medico_pendencias', 'medico'),
+(14, 'Ver agenda médica própria', 'medico_minha_agenda', 'medico'),
+(15, 'Ver histórico de atendimentos próprios', 'medico_historico_atendimentos', 'medico'),
+(16, 'Iniciar atendimento', 'atendimento_iniciar', 'medico'),
+(17, 'Gerenciar prontuário', 'prontuario_gerenciar', 'medico'),
+(18, 'Usar diagnóstico com IA', 'diagnostico_ia', 'medico'),
+(19, 'Aprovar triagens', 'triagem_aprovar', 'medico'),
+(20, 'Acessar módulo enfermagem', 'enfermeiro_acessar', 'enfermeiro'),
+(21, 'Ver agenda de enfermagem', 'enfermeiro_minha_agenda', 'enfermeiro'),
+(22, 'Ver histórico de enfermagem', 'enfermeiro_historico', 'enfermeiro'),
+(23, 'Criar e gerenciar triagens', 'triagem_gerenciar', 'enfermeiro'),
+(24, 'Acessar módulo técnico', 'tecnico_acessar', 'tecnico'),
+(25, 'Ver agenda do técnico', 'tecnico_minha_agenda', 'tecnico'),
+(26, 'Ver histórico do técnico', 'tecnico_historico', 'tecnico'),
+(27, 'Acessar módulo paciente', 'paciente_acessar', 'paciente'),
+(28, 'Ver próprias triagens', 'paciente_minhas_triagens', 'paciente'),
+(29, 'Ver próprios agendamentos', 'paciente_meus_agendamentos', 'paciente'),
+(30, 'Ver histórico de atendimentos', 'paciente_historico', 'paciente'),
+(31, 'Ver linha do tempo', 'paciente_linha_do_tempo', 'paciente'),
+(32, 'Analisar e encaminhar triagens', 'triagem_analisar', 'tecnico'),
+(33, 'Visualizar feedback dos pacientes', 'feedback_visualizar', 'sistema'),
+(34, 'Avaliar atendimento recebido', 'feedback_registrar', 'paciente');
+
+-- ============================================================
+-- 15. RELAÇÃO ROLE x PERMISSION
+-- ============================================================
+
+INSERT INTO tbl_role_permission (fk_role, fk_permission) VALUES
+(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),(1,8),(1,9),(1,10),(1,11),(1,12),(1,13),(1,14),(1,15),(1,16),(1,17),(1,18),(1,19),(1,20),(1,21),(1,22),(1,23),(1,24),(1,25),(1,26),(1,27),(1,28),(1,29),(1,30),(1,31),(1,32),(1,33),
+(2,1),(2,2),(2,11),(2,12),(2,13),(2,14),(2,15),(2,16),(2,17),(2,18),(2,19),
+(3,1),(3,2),(3,20),(3,21),(3,22),(3,23),
+(4,1),(4,2),(4,24),(4,25),(4,26),(4,32),
+(5,1),(5,2),(5,11),(5,27),(5,28),(5,29),(5,30),(5,31),(5,34);
+
+-- ============================================================
+-- 16. USUÁRIOS DE DEMONSTRAÇÃO
+-- ============================================================
+
+INSERT INTO tbl_usuario
+(id, nome, email, senha, primeiro_acesso)
+VALUES
+(1, 'Dr. Arnaldo Silva', 'arnaldo.silva@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(2, 'Dra. Beatriz Santos', 'beatriz.santos@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(3, 'Dr. Carlos Oliveira', 'carlos.oliveira@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(4, 'Dra. Daniela Costa', 'daniela.costa@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(5, 'Dr. Eduardo Souza', 'eduardo.souza@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(6, 'Dra. Fernanda Lima', 'fernanda.lima@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(7, 'Dr. Gabriel Almeida', 'gabriel.almeida@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(8, 'Dra. Helena Ribeiro', 'helena.ribeiro@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(9, 'Dr. Igor Carvalho', 'igor.carvalho@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(10, 'Dra. Juliana Martins', 'juliana.martins@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(11, 'Dr. Lucas Ferreira', 'lucas.ferreira@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(12, 'Dra. Mariana Rocha', 'mariana.rocha@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(13, 'Dr. Nicolas Gomes', 'nicolas.gomes@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(14, 'Dra. Olivia Mendes', 'olivia.mendes@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(15, 'Dr. Pedro Rezende', 'pedro.rezende@elomed.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(16, 'Roberto Alencar', 'roberto.alencar@gmail.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(17, 'Sandra Regina', 'sandra.regina@gmail.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(18, 'Thiago Ramos', 'thiago.ramos@gmail.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(19, 'Vanessa Lopes', 'vanessa.lopes@gmail.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(20, 'William Pires', 'william.pires@gmail.com', '$2y$10$wJWpcLxevw61MGzIvt0GV.7gtb805K1I/cHwWgfPZHE0SZS0Tf5Ey', FALSE),
+(31, 'Administrador', 'admin@gmail.com', '$2y$10$1MScr.9f9LacV1.0vuubpuTssN.1QpP93jWe8QtRUqEg4/t0jWnTG', FALSE);
+
+-- ============================================================
+-- 17. ATRIBUIÇÃO DE ROLES AOS USUÁRIOS
+-- ============================================================
+
+INSERT INTO tbl_user_role (fk_usuario, fk_role) VALUES
+(1,2),(2,2),(3,2),(4,2),
+(5,3),(6,3),(7,3),(8,3),
+(9,4),(10,4),(11,4),(12,4),(13,4),(14,4),(15,4),
+(16,5),(17,5),(18,5),(19,5),(20,5),
+(31,1);
+
+-- ============================================================
+-- 18. PROFISSIONAIS DE DEMONSTRAÇÃO
+-- ============================================================
+
+INSERT INTO tbl_profissional (id, fk_usuario, especialidade, tempo_experiencia_anos, numero_registro) VALUES
+(1,1,'Cardiologia',22,'CRM/SP 123456'),
+(2,2,'Pediatria',12,'CRM/RJ 234567'),
+(3,3,'Dermatologia',8,'CRM/MG 345678'),
+(4,4,'Ortopedia',15,'CRM/RS 456789'),
+(5,5,'Enfermagem',15,'COREN/PR 567890'),
+(6,6,'Enfermagem',9,'COREN/SC 678901'),
+(7,7,'Enfermagem',4,'COREN/BA 789012'),
+(8,8,'Enfermagem',18,'COREN/PE 890123'),
+(9,9,'Enfermagem',6,'COREN/CE 901234'),
+(10,10,'Enfermagem',11,'COREN/GO 012345'),
+(11,11,'Enfermagem',3,'COREN/DF 112233'),
+(12,12,'Enfermagem',7,'COREN/AM 223344'),
+(13,13,'Enfermagem',5,'COREN/PA 334455'),
+(14,14,'Enfermagem',10,'COREN/MT 445566'),
+(15,15,'Enfermagem',2,'COREN/MS 556677');
+
+-- ============================================================
+-- 19. PACIENTES DE DEMONSTRAÇÃO
+-- ============================================================
+
+INSERT INTO tbl_paciente (id, fk_usuario, data_nascimento, cpf, rg, sexo, estado_civil) VALUES
+(1, 16, '1985-04-12', '12345678901', 'MG1234567', 'masculino', 'casado'),
+(2, 17, '1990-08-25', '23456789012', 'SP2345678', 'feminino', 'solteiro'),
+(3, 18, '1978-11-03', '34567890123', 'RJ3456789', 'masculino', 'divorciado'),
+(4, 19, '1995-02-14', '45678901234', 'PR4567890', 'feminino', 'uniao_estavel'),
+(5, 20, '1962-06-30', '56789012345', 'SC5678901', 'masculino', 'viuvo');
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+INSERT INTO tbl_contato_emergencia (fk_paciente, nome, parentesco, telefone, principal) VALUES
+(1,'Maria Alencar','Mãe','11999991111',TRUE),
+(2,'José Regina','Irmão','21999992222',TRUE),
+(3,'Carla Ramos','Esposa','31999993333',TRUE),
+(4,'Marcos Lopes','Pai','51999994444',TRUE),
+(5,'Patrícia Pires','Esposa','41999995555',TRUE);
+
+-- ============================================================
+-- 20. PROTOCOLOS DE DEMONSTRAÇÃO
+-- ============================================================
+
+INSERT INTO tbl_protocolos (id, nome, descricao, categoria, ativo) VALUES
+(1,'Investigação Diagnóstica','Protocolo genérico para casos onde o diagnóstico ainda não é conhecido','investigacao',TRUE),
+(2,'Dengue','Protocolo para suspeita de dengue e outras arboviroses','agudo',TRUE),
+(3,'Diabetes Tipo 2','Protocolo para acompanhamento de diabetes mellitus tipo 2','cronico',TRUE),
+(4,'Hipertensão Arterial','Protocolo para acompanhamento de hipertensão arterial sistêmica','cronico',TRUE),
+(5,'Infarto Agudo do Miocárdio','Protocolo para suspeita de infarto agudo do miocárdio','agudo',TRUE),
+(6,'AVC (Acidente Vascular Cerebral)','Protocolo para suspeita de acidente vascular cerebral','agudo',TRUE),
+(7,'Asma','Protocolo para crise asmática e acompanhamento de asma','cronico',TRUE),
+(8,'COVID-19','Protocolo para suspeita de infecção por COVID-19','agudo',TRUE);
+
+INSERT INTO tbl_perguntas_protocolo
+(fk_protocolo, ordem, tipo, pergunta, placeholder, obrigatorio, opcoes)
+VALUES
+(1,1,'textarea','Descreva detalhadamente os sintomas que motivaram a consulta','Ex: dor de cabeça, febre, cansaço...',TRUE,NULL),
+(1,2,'texto','Há quanto tempo os sintomas começaram?','Ex: 2 dias, 1 semana...',TRUE,NULL),
+(1,3,'select','Os sintomas são contínuos ou intermitentes?',NULL,TRUE,'["Contínuos","Intermitentes","Variável"]'),
+(1,4,'textarea','Já fez algum tratamento para estes sintomas?','Descreva medicamentos ou procedimentos...',FALSE,NULL),
+(1,5,'textarea','Possui algum histórico familiar de doenças similares?','Descreva histórico familiar...',FALSE,NULL),
+(2,1,'texto','Tem febre há quantos dias?','Ex: 2 dias, 5 dias...',TRUE,NULL),
+(2,2,'select','Apresenta dor atrás dos olhos?',NULL,TRUE,'["Sim","Não"]'),
+(2,3,'select','Apresenta dor muscular ou nas articulações?',NULL,TRUE,'["Sim","Não"]'),
+(2,4,'select','Apresenta manchas vermelhas na pele?',NULL,TRUE,'["Sim","Não"]'),
+(2,5,'select','Apresenta náuseas ou vômitos?',NULL,FALSE,'["Sim","Não"]'),
+(2,6,'numero','Qual a temperatura máxima medida?','Ex: 38.5',TRUE,NULL),
+(2,7,'textarea','Descreva outros sintomas presentes','Ex: dor abdominal, sangramentos...',FALSE,NULL);
+
+-- ============================================================
+-- 21. CONVENIÊNCIAS E CONFIGURAÇÕES BÁSICAS
+-- ============================================================
+
+INSERT INTO tbl_convenio (nome_operadora, registro_ans) VALUES
+('Unimed','000000'),
+('Bradesco Saúde','005711'),
+('SulAmérica Saúde','006246');
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- ============================================================
+-- 22. VALIDAÇÃO FINAL
+-- ============================================================
+
+SELECT 'ELOMED instalado com sucesso.' AS mensagem;
+SELECT COUNT(*) AS total_tabelas
+FROM information_schema.tables
+WHERE table_schema = 'elomed';
+
+-- ============================================================
+-- OBSERVAÇÕES
+-- ============================================================
+--   Não existe mais coluna tbl_usuario.perfil. O acesso é controlado
+--   exclusivamente por tbl_roles/tbl_permissions/tbl_user_role.
+--   A antiga tbl_visita foi substituída por tbl_atendimento.
+--   A aplicação deve buscar o paciente do atendimento por meio de:
+--   atendimento -> agendamento -> paciente.
+--   A aplicação deve usar data_hora_inicio/data_hora_fim em agendamento.
+--   Os hashes de demonstração foram preservados do SQL original.
+--   Antes de produção, troque os usuários/dados demonstrativos e
+--   configure senhas/segredos fora do código-fonte.
+--   Run this complete file in phpMyAdmin to create/update the database
+--   Access credentials:
+--   Admin: admin@gmail.com / Admin@123
+--   Doctors: arnaldo.silva@elomed.com / EloMed@123
+--   Patients: roberto.alencar@gmail.com / EloMed@123
+--   The system includes:
+--   Complete patient registration (CPF, address, anamnesis)
+--   Action audit system
+--   RBAC access control (tbl_roles, tbl_permissions, tbl_role_permission, tbl_user_role)
+--   AI usage tracking
+--   Reminder system
+--   Triage risk classification
+--   Cancellation reason in appointments

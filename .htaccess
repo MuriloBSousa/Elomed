@@ -1,0 +1,22 @@
+# ========================================
+# Segurança da raiz do projeto
+# ========================================
+
+# Desativa listagem de diretórios
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Bloqueia acesso direto a arquivos sensíveis
+    RewriteRule ^\.env$ - [F,L]
+    RewriteRule ^\.gitignore$ - [F,L]
+    RewriteRule ^\.htaccess$ - [F,L]
+    RewriteRule ^elomed\.sql$ - [F,L]
+    RewriteRule ^eloMed\.rar$ - [F,L]
+    RewriteRule ^composer\.(json|lock)$ - [F,L]
+    RewriteRule ^.*\.(log|sql|md|txt|rar|bak|cache)([.\-].*)?$ - [F,L]
+
+    # Bloqueia acesso a diretórios internos
+    RewriteRule ^(logs|vendor|config|app)/ - [F,L]
+</IfModule>

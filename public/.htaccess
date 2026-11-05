@@ -1,0 +1,10 @@
+# Ativa a reescrita de URLs amigáveis
+RewriteEngine On
+
+# Se o arquivo realmente existir (CSS, JS, imagem), não reescreve
+RewriteCond %{REQUEST_FILENAME} !-f
+# Se a pasta realmente existir, também não reescreve
+RewriteCond %{REQUEST_FILENAME} !-d
+
+# Tudo que não for arquivo/pasta vai para o front controller
+RewriteRule ^(.*)$ index.php?url=$1 [QSA,L]

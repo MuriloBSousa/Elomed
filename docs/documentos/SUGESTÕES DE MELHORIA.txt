@@ -1,0 +1,115 @@
+================================================================================
+  PROJETO ELOMED - SUGESTOES DE MELHORIA
+================================================================================
+
+Para quem e este arquivo
+------------------------------------------------
+Esta lista traz sugestoes de melhoria para o projeto ELOMED. Diferente dos
+arquivos PASSOS.txt e PASSOS_PARTE_2.txt (que mostram como IMPLEMENTAR uma
+correcao ja feita), aqui o foco e FUNCIONALIDADE: o que o projeto ganharia
+se tivesse cada item. As sugestoes sao de melhoria do projeto (regras de
+negocio), nao um passo a passo de codigo.
+
+Legenda:
+[OBRIGATORIA]  = esperado em um cadastro/atendimento de verdade (basico).
+[RECOMENDADA]  = da bastante qualidade ao projeto, vale priorizar.
+[OPCIONAL]     = diferencial, impressiona na apresentacao.
+
+================================================================================
+1. CADASTRO DO PACIENTE (a parte mais fraca hoje)
+================================================================================
+Hoje o cadastro de paciente so tem: nome, email, telefone de emergencia
+(campo unico) e data de nascimento. Faltam dados que toda clinica usa.
+
+1.1 [OBRIGATORIA] Endereco completo: rua, numero, bairro, cidade, UF e CEP.
+    E o item que a clinica sempre pede. Numa fase futura, CEP + busca
+    automatica (viacep.com.br) preenche rua, bairro, cidade e UF sozinho -
+    e a mascara de CEP ja existe no mascaras.js da PARTE 2, e so
+    reaproveitar.
+
+1.2 [OBRIGATORIA] CPF com validacao (digito verificador) e RG. Hoje nenhum
+    dos dois e pedido no cadastro.
+
+1.3 [OBRIGATORIA] Telefone/celular principal do paciente, SEPARADO do
+    telefone de emergencia. O principal e o numero do proprio paciente.
+
+1.4 [OBRIGATORIA] Contato de emergencia estruturado: nome do contato,
+    parentesco e telefone em campos separados. Hoje e um campo unico livre
+    ("Ex: Pai - (61) ..."), que nao serve para relatorio.
+
+1.5 [RECOMENDADA] Convenio/plano de saude: operadora, numero da carteirinha
+    e validade.
+
+1.6 [RECOMENDADA] Foto do paciente e dados como sexo e estado civil.
+
+1.7 [OBRIGATORIA] Buscar paciente por CPF alem do nome (hoje a pesquisa em
+    cadastrar_paciente so busca por nome).
+
+================================================================================
+2. HISTORICO E ATENDIMENTO
+================================================================================
+2.1 [RECOMENDADA] Anamnese basica no cadastro: alergias, doencas previas,
+    medicamentos em uso, cirurgias. Hoje essa informacao so entra na queixa
+    da triagem e se perde.
+
+2.2 [OBRIGATORIA] Linha do tempo do paciente: reunir visitas, triagens e
+    diagnosticos em ordem cronologica em uma so tela. Hoje cada papel (medico,
+    enfermeiro, paciente) ve uma parte do historico separada.
+
+2.3 [RECOMENDADA] Classificacao de risco na triagem: em vez de so
+    "aprovada/recusada", adotar o modelo simplificado do Manchester
+    (vermelho = urgente, amarelo = prioridade, verde = comum). O painel
+    mostra a cor de quem esta esperando.
+
+================================================================================
+3. AGENDA
+================================================================================
+3.1 [OBRIGATORIA] Bloquear conflito de horarios: nao deixar agendar o mesmo
+    profissional nem o mesmo paciente em um horario que ja existe.
+
+3.2 [RECOMENDADA] Cancelar e reagendar com justificativa (hoje o
+    agendamento so muda de status e ponto final).
+
+3.3 [OPCIONAL] Lembrete de consulta: gerar um registro de "aviso enviado"
+    (simulado, sem API paga) mostrando que o sistema avisaria o paciente.
+
+================================================================================
+4. INTELIGENCIA ARTIFICIAL (telas do diagnostico_ia)
+================================================================================
+4.1 [OBRIGATORIA] Deixar explicito que a analise da IA e um AUXILIO: mostrar
+    "analise preliminar gerada por IA - aguarda validacao do medico" junto
+    da resposta, para o projeto nao vender a IA como diagnostico final.
+
+4.2 [RECOMENDADA] Limitar o numero de consultas por usuario/dia (ex.: 5 por
+    dia) para nao estourar a chave do Groq, e mostrar o modelo e o horario
+    da resposta na tela.
+
+================================================================================
+5. PAINEL E RELATORIOS
+================================================================================
+5.1 [RECOMENDADA] Painel com numeros: pacientes por dia, atendimentos por
+    status, tempo medio de atendimento e ocupacao da agenda.
+
+5.2 [OPCIONAL] Imprimir em PDF: triagem, prontuario e agenda do profissional
+    (a rotina de PDF ja existe no material dos outros projetos, e so adaptar).
+
+================================================================================
+6. QUALIDADE E SEGURANCA
+================================================================================
+6.1 [OBRIGATORIA] Validar data de nascimento (nada de data futura nem antes
+    de 1900) e campos obrigatorios - no formulario E no PHP (os dois lados).
+
+6.2 [RECOMENDADA] Nunca excluir registro de atendimento: triagem, visita e
+    prontuario so podem ser desativados/cancelados, nunca apagados.
+
+6.3 [RECOMENDADA] Badge de nova triagem/novo pedido no menu do enfermeiro e
+    do medico (pequeno contador vermelho com o numero de pendencias), avisa
+    sem depender de email.
+
+================================================================================
+ORDEM SUGERIDA DE EXECUCAO
+================================================================================
+Comece pela secao 1 (cadastro), onde o projeto esta mais desatualizado frente
+a uma clinica real. Depois faca 2.2 (linha do tempo), 3.1 (conflito de
+agenda) e 4.1 (carimbo de validacao da IA), que dao retorno rapido e visivel.
+As secoes 5 e 6 podem ser feitas por partes ate a apresentacao.

@@ -1,0 +1,133 @@
+================================================================================
+  PROJETO ELOMED - PASSO A PASSO EXTRA (PARTE 2)
+  
+================================================================================
+
+Para quem e este arquivo
+----------------------------------------------------------------
+Este guia complementa o PASSOS.txt (principal) e mostra, passo a
+passo, a melhoria de usabilidade feita neste projeto:
+
+- MASCARA DE TELEFONE no formulario de cadastro de paciente
+  (campo "Telefone de Emergencia").
+
+(O toast de mensagens e a profissionalizacao ja estao documentados
+no PASSOS.txt principal - nao fazem parte deste arquivo.)
+
+Legenda de arquivos
+----------------------------------------------------------------
+- public/Assets/js/mascaras.js                -> o script (novo)
+- app/views/usuarios/cadastrar_paciente.php   -> o formulario com o
+  campo campo-telefone e o include do script
+
+
+================================================================================
+PARTE 2 - MASCARA DE TELEFONE NO CADASTRO DE PACIENTE
+================================================================================
+Contexto: o formulario "Cadastrar Paciente" tem o campo Telefone de
+Emergencia (name="tel_emergencia"). Sem mascara, o usuario digita
+qualquer formato. Com a mascara, o campo aceita so numeros e mostra
+(00) 00000-0000 enquanto digita.
+
+Comportamento que sera criado:
+- Mascara (00) 00000-0000: o numero de telefone se formata sozinho
+  enquanto digita (aceita fixo e celular);
+- Valor ja preenchido (caso exista) e formatado ao carregar a pagina;
+- No ENVIO do formulario a mascara e removida: o servidor recebe so
+  os numeros. (O proprio script tambem tem mascaras de CPF e CEP
+  prontas - se no futuro o projeto ganhar um campo de CPF ou CEP,
+  e so colocar a class correspondente: campo-cpf / campo-cep.)
+
+Passo 2.1 - Crie o arquivo  public/Assets/js/mascaras.js  (novo):
+
+    function soDigitos(v) {
+        return (v || '').replace(/\D/g, '');
+    }
+
+    function formatarCpf(v) {
+        const d = soDigitos(v).slice(0, 11);
+        if (d.length <= 3) return d;
+        if (d.length <= 6) return d.replace(/(\d{3})(\d)/, '$1.$2');
+        if (d.length <= 9) return d.replace(/(\d{3})(\d{3})(\d)/, '$1.$2.$3');
+        return d.replace(/(\d{3})(\d{3})(\d{3})(\d)/, '$1.$2.$3-$4');
+    }
+
+    function formatarTelefone(v) {
+        const d = soDigitos(v).slice(0, 11);
+        if (d.length === 0) return d;
+        if (d.length <= 2) return '(' + d;
+        if (d.length <= 6) return '(' + d.slice(0, 2) + ') ' + d.slice(2);
+        if (d.length <= 10) return '(' + d.slice(0, 2) + ') ' + d.slice(2, 6) + '-' + d.slice(6);
+        return '(' + d.slice(0, 2) + ') ' + d.slice(2, 7) + '-' + d.slice(7);
+    }
+
+    function formatarCep(v) {
+        const d = soDigitos(v).slice(0, 8);
+        if (d.length <= 5) return d;
+        return d.slice(0, 5) + '-' + d.slice(5);
+    }
+
+    const MASCARA = {
+        'campo-cpf': formatarCpf,
+        'campo-telefone': formatarTelefone,
+        'campo-cep': formatarCep,
+    };
+
+    document.addEventListener('input', (e) => {
+        const t = e.target;
+        if (!t || !t.classList) return;
+        for (const [classe, fn] of Object.entries(MASCARA)) {
+            if (t.classList.contains(classe)) {
+                t.value = fn(t.value);
+            }
+        }
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        for (const [classe, fn] of Object.entries(MASCARA)) {
+            document.querySelectorAll('.' + classe).forEach((input) => {
+                if (input.value) input.value = fn(input.value);
+            });
+        }
+    });
+
+    document.addEventListener('submit', (e) => {
+        e.target.querySelectorAll('.campo-cpf, .campo-telefone, .campo-cep').forEach((input) => {
+            input.value = soDigitos(input.value);
+        });
+    });
+
+Passo 2.2 - Marque o campo  app/views/usuarios/cadastrar_paciente.php
+  Adicione a class "campo-telefone" no input do telefone de emergencia:
+
+    ANTES:
+      <input type="text" name="tel_emergencia" required placeholder="Ex: Pai - (61) 9999-9999">
+    DEPOIS:
+      <input type="text" name="tel_emergencia" class="campo-telefone" required placeholder="Ex: Pai - (61) 9999-9999">
+
+Passo 2.3 - Carregue o script na pagina
+  No final de  app/views/usuarios/cadastrar_paciente.php , logo apos
+  o include do toast e antes de </body>, adicione:
+
+      <script src="public/Assets/js/mascaras.js"></script>
+
+Para testar (logado como admin):
+- Abra: http://localhost/projeto_modelo_richard/index.php?controller=usuario&action=procurar_paciente
+- Busque um usuario pelo nome e selecione-o;
+- No campo Telefone de Emergencia digite 61999999999:
+  deve aparecer (61) 99999-9999 enquanto digita;
+- Ao enviar, o servidor recebe so os numeros.
+
+Observacao: se um dia criar um NOVO formulario com campo de telefone,
+CPF ou CEP, basta colocar a class correspondente (campo-telefone,
+campo-cpf ou campo-cep) que a mascara funciona (o script so depende
+dessas classes).
+
+
+================================================================================
+DICAS FINAIS
+================================================================================
+- Tudo aqui e arquivo novo ou ajuste de 1-2 linhas; nao quebra nada
+  do que ja existia.
+- O script usa class, entao vale para qualquer formulario do projeto.
+- Abra com Ctrl+F5 (limpar cache) apos mudar o arquivo.

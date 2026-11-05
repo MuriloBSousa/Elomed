@@ -1,0 +1,42 @@
+# Variáveis de ambiente
+.env
+.env.local
+.env.production
+
+# Logs
+logs/
+*.log
+
+# Cache
+cache/
+*.cache
+
+# Uploads
+public/uploads/
+
+# Uploads de fotos de pacientes
+public/Assets/images/usuario/*
+!public/Assets/images/usuario/index.html
+
+# Chaves de API (nunca versionar)
+config/api_key.php
+config/groq_api_key.php
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Composer
+vendor/
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log

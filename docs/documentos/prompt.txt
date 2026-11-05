@@ -1,0 +1,27 @@
+Por favor, atue como um Engenheiro Frontend Sênior e Especialista em UI/UX. 
+Preciso que você refatore o código da página/componente de "Trilha de Auditoria" do sistema EloMed.
+
+### Contexto Atual
+O componente atual exibe um log de eventos de auditoria contendo as seguintes colunas estáticas:
+- **Quando** (Data e hora do evento)
+- **Quem** (Nome do usuário)
+- **Perfil** (Tipo de usuário/perfil de acesso)
+- **Evento** (Ação realizada, ex: login, logout)
+- **Descricao** (Detalhes textuais da ação)
+- **IP** (Endereço IP de origem)
+
+O layout atual está muito simples e precisa de melhorias visuais para seguir o padrão moderno do restante do sistema.
+
+### Requisitos de Melhoria (UI/UX e Código):
+1. **Design Limpo e Moderno**: 
+   - Transforme a listagem em uma tabela elegante com bordas sutis (`border-radius`, espaçamento interno/padding adequado, e efeito *hover* nas linhas).
+   - Adicione cabeçalhos fixos ou destacados com tipografia em negrito e tom neutro/secundário.
+2. **Badges e Cores para Eventos e Perfis**:
+   - Utilize **badges/tags** visuais para a coluna **Perfil** (ex: diferenciar Administrador, Médico/Dr. e Paciente com cores distintas e suaves, como azul, verde e roxo).
+   - Destaque o tipo de **Evento** (ex: `login` em verde/sucesso, `logout` em cinza ou tom neutro).
+3. **Formatação de Dados**:
+   - Melhore a legibilidade da coluna **Quando** separando visualmente a data da hora (ex: data em texto principal e hora em fonte menor/cinza abaixo).
+   - Monospace ou estilo sutil para a coluna **IP** (ex: fonte em bloco de código leve ou cinza discreto).
+4. **Manutenibilidade**:
+   - Mantenha exatamente todas as props, dados e lógica de negócio já existentes.
+   - O código deve ser limpo, componentizado se necessário, e totalmente responsivo para diferentes tamanhos de tela.
